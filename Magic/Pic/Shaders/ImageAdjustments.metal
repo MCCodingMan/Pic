@@ -73,6 +73,12 @@ struct RealtimeCameraAdjustmentParams {
     float vignette;
     float sharpen;
     float clarity;
+    float grain;
+};
+
+struct CameraDisplayParams {
+    float scale;
+    float2 offset;
 };
 
 // MARK: - Basic Adjustments
@@ -325,5 +331,27 @@ kernel void realtimeCameraFilterKernel(texture2d<float, access::sample> inTextur
         result.rgb *= (1.0 - v);
     }
 
+    if (adjParams.grain > 0.0001) {
+        float noise = fract(sin(dot(float2(gid), float2(12.9898, 78.233))) * 43758.5453);
+        result.rgb = clamp(result.rgb + (noise - 0.5) * adjParams.grain * 0.16, 0.0, 1.0);
+    }
+
     outTexture.write(float4(clamp(result.rgb, 0.0, 1.0), result.a), gid);
+}
+
+kernel void cameraDisplayKernel(texture2d<float, access::sample> inTexture [[texture(0)]],
+                                texture2d<float, access::write> outTexture [[texture(1)]],
+                                constant CameraDisplayParams &params [[buffer(0)]],
+                                uint2 gid [[thread_position_in_grid]]) {
+    if (gid.x >= outTexture.get_width() || gid.y >= outTexture.get_height()) {
+        return;
+    }
+
+    constexpr sampler s(mag_filter::linear, min_filter::linear, address::clamp_to_edge);
+    float2 dst = float2(gid) + 0.5;
+    float2 src = (dst - params.offset) / max(params.scale, 1e-6);
+    float2 srcSize = float2(inTexture.get_width(), inTexture.get_height());
+    float2 uv = src / srcSize;
+    float4 color = inTexture.sample(s, uv);
+    outTexture.write(color, gid);
 }

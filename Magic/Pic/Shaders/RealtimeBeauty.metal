@@ -38,6 +38,7 @@ struct RealtimeCameraAdjustmentParams {
     float vignette;
     float sharpen;
     float clarity;
+    float grain;
 };
 
 struct RealtimeColorMatrixParams {
@@ -56,6 +57,7 @@ static inline float4 realtimeApplyCameraFilter(float4 source,
                                                float3 baseColor,
                                                float2 uv,
                                                float2 px,
+                                               uint2 gid,
                                                texture2d<float, access::sample> inTex,
                                                sampler s,
                                                constant RealtimeCameraAdjustmentParams &adjParams,
@@ -120,6 +122,11 @@ static inline float4 realtimeApplyCameraFilter(float4 source,
         float dist = distance(uv, float2(0.5, 0.5));
         float v = smoothstep(0.34, 0.78, dist) * adjParams.vignette * 0.72;
         result.rgb *= (1.0 - v);
+    }
+
+    if (adjParams.grain > 0.0001) {
+        float noise = fract(sin(dot(float2(gid), float2(12.9898, 78.233))) * 43758.5453);
+        result.rgb = clamp(result.rgb + (noise - 0.5) * adjParams.grain * 0.16, 0.0, 1.0);
     }
 
     return float4(clamp(result.rgb, 0.0, 1.0), result.a);
@@ -298,6 +305,6 @@ kernel void realtimeBeautyFilterKernel(
     );
 
     float3 beautified = clamp(yuvOut + params.whitening * skinMask * 0.08, 0.0, 1.0);
-    float4 filtered = realtimeApplyCameraFilter(src, beautified, uv, px, inTex, s, adjParams, matrixParams, intensity);
+    float4 filtered = realtimeApplyCameraFilter(src, beautified, uv, px, gid, inTex, s, adjParams, matrixParams, intensity);
     outTex.write(filtered, gid);
 }
