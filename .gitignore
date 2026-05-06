@@ -1,0 +1,11 @@
+.DS_Store
+.build/
+.swiftpm/
+DerivedData/
+
+*.xcuserstate
+xcuserdata/
+.claude/settings.local.json
+
+*.moved-aside
+*.xcscmblueprint
