@@ -36,7 +36,7 @@ enum PicCameraEffectsProcessor {
             mtlTexture: texture,
             options: [.colorSpace: rgbColorSpace]
            ) {
-            return processed.oriented(.leftMirrored)
+            return processed.oriented(.right)
         } else {
             let baseImage = CIImage(cvPixelBuffer: pixelBuffer).oriented(.right)
             let adjustedImage = apply(adjustments: adjustments, to: baseImage)
@@ -66,8 +66,10 @@ enum PicCameraEffectsProcessor {
             return nil
         }
 
-        let adjustedImage = apply(adjustments: adjustments, to: ciImage)
-        return apply(filter: activeFilter, to: adjustedImage)
+        var edits = EditState()
+        edits.adjustments = adjustments
+        edits.filter = activeFilter
+        return ImagePipeline.shared.processEditor(ciImage, edits: edits)
     }
 
     nonisolated static func apply(filter: FilterModel, to image: CIImage) -> CIImage {

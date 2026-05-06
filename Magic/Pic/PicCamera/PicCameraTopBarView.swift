@@ -63,7 +63,7 @@ struct PicCameraTopBarView: View {
     private func topBarButton(for action: PicCameraViewModel.ToolbarAction) -> some View {
         Button {
             handleToolbarAction(action)
-            viewModel.showToolbarHint(title(for: action))
+            viewModel.showToolbarHint(toolbarHint(for: action))
         } label: {
             Image(systemName: iconName(for: action))
                 .font(.system(size: 14, weight: .medium))
@@ -101,7 +101,7 @@ struct PicCameraTopBarView: View {
             withAnimation(.easeInOut(duration: 0.2)) {
                 viewModel.toggleGrid()
             }
-            viewModel.showToolbarHint("网格")
+            viewModel.showToolbarHint("网格：\(viewModel.isGridEnabled ? "开" : "关")")
         } label: {
             Image(systemName: "square.grid.3x3")
                 .font(.system(size: 14, weight: .medium))
@@ -139,7 +139,7 @@ struct PicCameraTopBarView: View {
             withAnimation(.easeInOut(duration: 0.2)) {
                 viewModel.toggleLevel()
             }
-            viewModel.showToolbarHint("水平仪")
+            viewModel.showToolbarHint("水平仪：\(viewModel.isLevelEnabled ? "开" : "关")")
         } label: {
             Image(systemName: "level")
                 .font(.system(size: 14, weight: .medium))
@@ -219,6 +219,21 @@ struct PicCameraTopBarView: View {
         }
     }
 
+    private func toolbarHint(for action: PicCameraViewModel.ToolbarAction) -> String {
+        switch action {
+        case .flash:
+            return "闪光灯：\(flashStateText)"
+        case .livePhoto:
+            return "实况照片：\(viewModel.isLivePhotoEnabled ? "开" : "关")"
+        case .autoFilter:
+            return "自动滤镜：\(viewModel.isAutoFilterEnabled ? "开" : "关")"
+        case .beauty, .quickBeauty, .adjust, .filter:
+            return "\(title(for: action))：\(viewModel.isToolbarActionActive(action) ? "开" : "关")"
+        case .settings:
+            return title(for: action)
+        }
+    }
+
     private func foregroundColor(for action: PicCameraViewModel.ToolbarAction) -> Color {
         switch action {
         case .beauty:
@@ -263,6 +278,19 @@ struct PicCameraTopBarView: View {
             return DS.ColorToken.warning(scheme)
         @unknown default:
             return DS.ColorToken.textPrimary(scheme).opacity(0.8)
+        }
+    }
+
+    private var flashStateText: String {
+        switch viewModel.flashMode {
+        case .off:
+            return "关"
+        case .auto:
+            return "自动"
+        case .on:
+            return "开"
+        @unknown default:
+            return "关"
         }
     }
 

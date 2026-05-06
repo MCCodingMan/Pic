@@ -37,12 +37,18 @@ struct PicCameraRenderState: @unchecked Sendable, Equatable {
 }
 
 final class PicCameraRenderer: NSObject, MTKViewDelegate, @unchecked Sendable {
+    private struct CameraDisplayParamsCPU {
+        var scale: Float
+        var offset: SIMD2<Float>
+    }
+
     let device: MTLDevice
     
     nonisolated(unsafe) var canRender: Bool = true
 
     private let commandQueue: MTLCommandQueue
     private let ciContext: CIContext
+    private let displayPipelineState: MTLComputePipelineState?
     private let colorSpace = CGColorSpaceCreateDeviceRGB()
     private let lock = NSLock()
     private let inFlightSemaphore = DispatchSemaphore(value: 2)
@@ -64,8 +70,10 @@ final class PicCameraRenderer: NSObject, MTKViewDelegate, @unchecked Sendable {
     }
 
     private init(device: MTLDevice, commandQueue: MTLCommandQueue) {
+        let manager = MetalResourceManager.shared
         self.device = device
         self.commandQueue = commandQueue
+        self.displayPipelineState = manager.computePipeline(named: "cameraDisplayKernel")
         self.ciContext = CIContext(
             mtlCommandQueue: commandQueue,
             options: [
@@ -178,21 +186,70 @@ final class PicCameraRenderer: NSObject, MTKViewDelegate, @unchecked Sendable {
             inFlightSemaphore.signal()
             return
         }
-
-        let previewImage = makePreviewImage(
-            from: pixelBuffer,
-            depthData: depthData,
+        let previewTexture = ImagePipeline.shared.processCameraFrame(
+            pixelBuffer: pixelBuffer,
+            params: state.beautyParams,
             faceContext: faceContext,
-            state: state
+            adjustments: state.adjustments,
+            filter: state.filter,
+            commandBuffer: commandBuffer
         )
-        let finalImage = makeDisplayImage(from: previewImage, drawSize: drawSize)
-        ciContext.render(
-            finalImage,
-            to: drawable.texture,
-            commandBuffer: commandBuffer,
-            bounds: CGRect(origin: .zero, size: drawSize),
-            colorSpace: colorSpace
-        )
+
+        if state.mode == .portrait, let depthData {
+            let previewImage = makePreviewImage(
+                from: pixelBuffer,
+                depthData: depthData,
+                faceContext: faceContext,
+                state: state,
+                previewTexture: previewTexture
+            )
+            let finalImage = makeDisplayImage(from: previewImage, drawSize: drawSize)
+            ciContext.render(
+                finalImage,
+                to: drawable.texture,
+                commandBuffer: commandBuffer,
+                bounds: CGRect(origin: .zero, size: drawSize),
+                colorSpace: colorSpace
+            )
+        } else if let previewTexture,
+                  !renderTextureToDrawable(
+                    previewTexture,
+                    drawableTexture: drawable.texture,
+                    commandBuffer: commandBuffer,
+                    drawSize: drawSize
+                  ) {
+            let previewImage = PicCameraEffectsProcessor.makePreviewImage(
+                pixelBuffer: pixelBuffer,
+                beautyParams: state.beautyParams,
+                faceContext: faceContext,
+                adjustments: state.adjustments,
+                filter: state.filter
+            )
+            let finalImage = makeDisplayImage(from: previewImage, drawSize: drawSize)
+            ciContext.render(
+                finalImage,
+                to: drawable.texture,
+                commandBuffer: commandBuffer,
+                bounds: CGRect(origin: .zero, size: drawSize),
+                colorSpace: colorSpace
+            )
+        } else {
+            let previewImage = PicCameraEffectsProcessor.makePreviewImage(
+                pixelBuffer: pixelBuffer,
+                beautyParams: state.beautyParams,
+                faceContext: faceContext,
+                adjustments: state.adjustments,
+                filter: state.filter
+            )
+            let finalImage = makeDisplayImage(from: previewImage, drawSize: drawSize)
+            ciContext.render(
+                finalImage,
+                to: drawable.texture,
+                commandBuffer: commandBuffer,
+                bounds: CGRect(origin: .zero, size: drawSize),
+                colorSpace: colorSpace
+            )
+        }
 
         commandBuffer.addCompletedHandler { [inFlightSemaphore] _ in
             inFlightSemaphore.signal()
@@ -207,15 +264,22 @@ final class PicCameraRenderer: NSObject, MTKViewDelegate, @unchecked Sendable {
         from pixelBuffer: CVPixelBuffer,
         depthData: AVDepthData?,
         faceContext: FaceContext,
-        state: PicCameraRenderState
+        state: PicCameraRenderState,
+        previewTexture: MTLTexture?
     ) -> CIImage {
-        let processedImage = PicCameraEffectsProcessor.makePreviewImage(
-            pixelBuffer: pixelBuffer,
-            beautyParams: state.beautyParams,
-            faceContext: faceContext,
-            adjustments: state.adjustments,
-            filter: state.filter
-        )
+        let processedImage: CIImage
+        if let previewTexture,
+           let ciImage = CIImage(mtlTexture: previewTexture, options: [.colorSpace: colorSpace]) {
+            processedImage = ciImage.oriented(.right)
+        } else {
+            processedImage = PicCameraEffectsProcessor.makePreviewImage(
+                pixelBuffer: pixelBuffer,
+                beautyParams: state.beautyParams,
+                faceContext: faceContext,
+                adjustments: state.adjustments,
+                filter: state.filter
+            )
+        }
 
         guard state.mode == .portrait,
               let depthData,
@@ -259,5 +323,46 @@ final class PicCameraRenderer: NSObject, MTKViewDelegate, @unchecked Sendable {
         let offsetY = (drawSize.height - scaled.extent.height) * 0.5 - scaled.extent.origin.y
         let centered = scaled.transformed(by: CGAffineTransform(translationX: offsetX, y: offsetY))
         return centered.cropped(to: CGRect(origin: .zero, size: drawSize))
+    }
+
+    private func renderTextureToDrawable(
+        _ sourceTexture: MTLTexture,
+        drawableTexture: MTLTexture,
+        commandBuffer: MTLCommandBuffer,
+        drawSize: CGSize
+    ) -> Bool {
+        guard let displayPipelineState,
+              let encoder = commandBuffer.makeComputeCommandEncoder() else {
+            return false
+        }
+        let srcWidth = Float(sourceTexture.width)
+        let srcHeight = Float(sourceTexture.height)
+        let dstWidth = Float(drawSize.width)
+        let dstHeight = Float(drawSize.height)
+        let scale = max(dstWidth / srcWidth, dstHeight / srcHeight)
+        let scaledWidth = srcWidth * scale
+        let scaledHeight = srcHeight * scale
+        let offset = SIMD2<Float>(
+            (dstWidth - scaledWidth) * 0.5,
+            (dstHeight - scaledHeight) * 0.5
+        )
+        var params = CameraDisplayParamsCPU(scale: scale, offset: offset)
+
+        encoder.setComputePipelineState(displayPipelineState)
+        encoder.setTexture(sourceTexture, index: 0)
+        encoder.setTexture(drawableTexture, index: 1)
+        encoder.setBytes(&params, length: MemoryLayout<CameraDisplayParamsCPU>.stride, index: 0)
+        let w = displayPipelineState.threadExecutionWidth
+        let h = max(1, displayPipelineState.maxTotalThreadsPerThreadgroup / w)
+        encoder.dispatchThreadgroups(
+            MTLSize(
+                width: (drawableTexture.width + w - 1) / w,
+                height: (drawableTexture.height + h - 1) / h,
+                depth: 1
+            ),
+            threadsPerThreadgroup: MTLSize(width: w, height: h, depth: 1)
+        )
+        encoder.endEncoding()
+        return true
     }
 }

@@ -13,7 +13,7 @@ enum PicCameraMode: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .photo:
-            return "普通"
+            return "拍照"
         case .portrait:
             return "人像"
         }
@@ -35,7 +35,8 @@ enum PicCameraMode: String, CaseIterable, Identifiable {
         case (.photo, .front):
             return [.builtInWideAngleCamera, .builtInTrueDepthCamera]
         case (.portrait, .back):
-            return [.builtInLiDARDepthCamera]
+            // Portrait should work on more devices, not only LiDAR-capable ones.
+            return [.builtInLiDARDepthCamera, .builtInTripleCamera, .builtInDualWideCamera, .builtInDualCamera, .builtInWideAngleCamera]
         case (.portrait, .front):
             return [.builtInTrueDepthCamera, .builtInWideAngleCamera]
         default:
@@ -150,11 +151,11 @@ final class PicCameraService: NSObject, @unchecked Sendable {
     }
 
     func switchMode(to mode: PicCameraMode) async -> Bool {
-        currentMode = mode
+        let targetMode = mode
         let preferredPosition = currentCameraPosition()
-        guard let device = preferredDevice(for: mode, position: preferredPosition)
-            ?? preferredDevice(for: mode, position: .back)
-            ?? preferredDevice(for: mode, position: .front) else {
+        guard let device = preferredDevice(for: targetMode, position: preferredPosition)
+            ?? preferredDevice(for: targetMode, position: .back)
+            ?? preferredDevice(for: targetMode, position: .front) else {
             return false
         }
 
@@ -199,15 +200,18 @@ final class PicCameraService: NSObject, @unchecked Sendable {
                     self.session.addInput(newInput)
                     self.currentInput = newInput
                 }
-                self.currentMode = mode
+                self.currentMode = targetMode
                 if self.session.outputs.contains(self.depthOutput) {
                     self.session.removeOutput(self.depthOutput)
                 }
-                let shouldEnableDepth = mode == .portrait && self.session.canAddOutput(self.depthOutput)
+                let shouldEnableDepth = targetMode == .portrait &&
+                    self.supportsDepthStream(on: device) &&
+                    self.supportsDepthPhotoCapture(on: device) &&
+                    self.session.canAddOutput(self.depthOutput)
                 if shouldEnableDepth {
                     self.session.addOutput(self.depthOutput)
-                    self.adjustsVideoMirroring(with: self.depthOutput)
                 }
+                self.applyMirroringToActiveConnections()
                 if self.photoOutput.isDepthDataDeliverySupported {
                     self.photoOutput.isDepthDataDeliveryEnabled = shouldEnableDepth
                 }
@@ -268,11 +272,14 @@ final class PicCameraService: NSObject, @unchecked Sendable {
                 if self.session.outputs.contains(self.depthOutput) {
                     self.session.removeOutput(self.depthOutput)
                 }
-                let shouldEnableDepth = self.currentMode == .portrait && self.session.canAddOutput(self.depthOutput)
+                let shouldEnableDepth = self.currentMode == .portrait &&
+                    self.supportsDepthStream(on: device) &&
+                    self.supportsDepthPhotoCapture(on: device) &&
+                    self.session.canAddOutput(self.depthOutput)
                 if shouldEnableDepth {
                     self.session.addOutput(self.depthOutput)
-                    self.adjustsVideoMirroring(with: self.depthOutput)
                 }
+                self.applyMirroringToActiveConnections()
                 if self.photoOutput.isDepthDataDeliverySupported {
                     self.photoOutput.isDepthDataDeliveryEnabled = shouldEnableDepth
                 }
@@ -492,16 +499,17 @@ final class PicCameraService: NSObject, @unchecked Sendable {
         }
 
         session.addOutput(videoOutput)
-        adjustsVideoMirroring(with: videoOutput)
         session.addOutput(photoOutput)
-        adjustsVideoMirroring(with: photoOutput)
         session.addOutput(metadataOutput)
-        adjustsVideoMirroring(with: metadataOutput)
+        applyMirroringToActiveConnections()
 
-        let shouldEnableDepth = mode == .portrait && session.canAddOutput(depthOutput)
+        let shouldEnableDepth = mode == .portrait &&
+            supportsDepthStream(on: device) &&
+            supportsDepthPhotoCapture(on: device) &&
+            session.canAddOutput(depthOutput)
         if shouldEnableDepth {
             session.addOutput(depthOutput)
-            adjustsVideoMirroring(with: depthOutput)
+            applyMirroringToActiveConnections()
         }
 
         photoOutput.maxPhotoQualityPrioritization = .balanced
@@ -524,11 +532,29 @@ final class PicCameraService: NSObject, @unchecked Sendable {
         return true
     }
     
-    private func adjustsVideoMirroring(with output: AVCaptureOutput) {
-        if let connection = output.connection(with: .video), connection.isVideoMirroringSupported {
-            connection.automaticallyAdjustsVideoMirroring = false
-            connection.isVideoMirrored = currentCameraPosition() == .front
+    private func adjustMirroringIfSupported(_ connection: AVCaptureConnection?) {
+        guard let connection, connection.isVideoMirroringSupported else { return }
+        connection.automaticallyAdjustsVideoMirroring = false
+        connection.isVideoMirrored = currentCameraPosition() == .front
+    }
+
+    private func applyMirroringToActiveConnections() {
+        adjustMirroringIfSupported(videoOutput.connection(with: .video))
+        adjustMirroringIfSupported(photoOutput.connection(with: .video))
+        adjustMirroringIfSupported(metadataOutput.connection(with: .video))
+        adjustMirroringIfSupported(depthOutput.connection(with: .depthData))
+    }
+
+    private func supportsDepthStream(on device: AVCaptureDevice) -> Bool {
+        !device.activeFormat.supportedDepthDataFormats.isEmpty
+    }
+
+    private func supportsDepthPhotoCapture(on device: AVCaptureDevice) -> Bool {
+        guard supportsDepthStream(on: device) else { return false }
+        if photoOutput.isDepthDataDeliverySupported {
+            return true
         }
+        return preferredDepthFormat(for: device) != nil
     }
 
     private func configureFrameDelivery(enableDepth: Bool) {
@@ -592,9 +618,7 @@ final class PicCameraService: NSObject, @unchecked Sendable {
     }
 
     private func applyDeviceConfiguration(to device: AVCaptureDevice) {
-        for connection in [videoOutput.connection(with: .video), depthOutput.connection(with: .depthData)].compactMap({ $0 }) {
-            connection.automaticallyAdjustsVideoMirroring = connection.isVideoMirroringSupported
-        }
+        applyMirroringToActiveConnections()
 
         do {
             try device.lockForConfiguration()
