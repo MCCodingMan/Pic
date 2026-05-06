@@ -15,6 +15,7 @@ nonisolated final class RealtimeCameraFilterPipeline: @unchecked Sendable {
         var vignette: Float
         var sharpen: Float
         var clarity: Float
+        var grain: Float
     }
 
     private struct ColorMatrixParamsCPU {
@@ -48,9 +49,29 @@ nonisolated final class RealtimeCameraFilterPipeline: @unchecked Sendable {
         adjustments: Adjustments,
         filter: FilterModel
     ) -> MTLTexture? {
+        guard let commandBuffer = queue.makeCommandBuffer() else {
+            return nil
+        }
+        let output = process(
+            pixelBuffer: pixelBuffer,
+            sourceTexture: sourceTexture,
+            adjustments: adjustments,
+            filter: filter,
+            commandBuffer: commandBuffer
+        )
+        commandBuffer.commit()
+        return output
+    }
+
+    nonisolated func process(
+        pixelBuffer: CVPixelBuffer,
+        sourceTexture: MTLTexture?,
+        adjustments: Adjustments,
+        filter: FilterModel,
+        commandBuffer: MTLCommandBuffer
+    ) -> MTLTexture? {
         guard let inputTexture = sourceTexture ?? makeInputTexture(from: pixelBuffer),
               let outputTexture = makeOutputTexture(width: inputTexture.width, height: inputTexture.height),
-              let commandBuffer = queue.makeCommandBuffer(),
               let encoder = commandBuffer.makeComputeCommandEncoder() else {
             return nil
         }
@@ -77,7 +98,6 @@ nonisolated final class RealtimeCameraFilterPipeline: @unchecked Sendable {
             threadsPerThreadgroup: MTLSize(width: width, height: height, depth: 1)
         )
         encoder.endEncoding()
-        commandBuffer.commit()
 
         return outputTexture
     }
@@ -136,7 +156,8 @@ nonisolated final class RealtimeCameraFilterPipeline: @unchecked Sendable {
             tint: Float(combined.tint),
             vignette: Float(combined.vignette),
             sharpen: Float(combined.sharpen),
-            clarity: Float(combined.clarity)
+            clarity: Float(combined.clarity),
+            grain: Float(combined.grain)
         )
     }
 

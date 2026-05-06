@@ -1,6 +1,7 @@
 import UIKit
 import CoreImage
 import Vision
+import Metal
 
 /// 统一的图片处理编排层 —— 三个调用方（编辑器、美颜页面、美颜相机）的共同入口。
 ///
@@ -16,8 +17,10 @@ nonisolated final class ImagePipeline: @unchecked Sendable {
 
     private let realtimePipeline: RealtimeBeautyPipeline?
     private let realtimeFilterPipeline: RealtimeCameraFilterPipeline?
+    private let commandQueue: MTLCommandQueue
 
     private init() {
+        self.commandQueue = MetalResourceManager.shared.commandQueue
         self.realtimePipeline = RealtimeBeautyPipeline()
         self.realtimeFilterPipeline = RealtimeCameraFilterPipeline()
     }
@@ -49,7 +52,11 @@ nonisolated final class ImagePipeline: @unchecked Sendable {
                                         faceContext: FaceContext,
                                         adjustments: Adjustments,
                                         filter: FilterModel) -> MTLTexture? {
-        let needsFilter = !adjustments.isDefault || filter.id != "original"
+        guard let commandBuffer = commandQueue.makeCommandBuffer() else {
+            return nil
+        }
+        let activeFilter = normalizedFilter(filter)
+        let needsFilter = !adjustments.isDefault || activeFilter.id != "original"
         let beautyTexture: MTLTexture?
         if !params.isIdentity, let realtimePipeline {
             let cpuParams = RealtimeBeautyPipeline.ParamsCPU(
@@ -64,14 +71,72 @@ nonisolated final class ImagePipeline: @unchecked Sendable {
                     params: cpuParams,
                     faceContext: faceContext,
                     adjustments: adjustments,
-                    filter: filter
+                    filter: activeFilter,
+                    commandBuffer: commandBuffer
                 )
+                commandBuffer.commit()
                 return beautyTexture
             } else {
                 beautyTexture = realtimePipeline.process(
                     pixelBuffer: pixelBuffer,
                     params: cpuParams,
-                    faceContext: faceContext
+                    faceContext: faceContext,
+                    commandBuffer: commandBuffer
+                )
+            }
+        } else {
+            beautyTexture = nil
+        }
+
+        guard needsFilter else {
+            commandBuffer.commit()
+            return beautyTexture
+        }
+
+        let output = realtimeFilterPipeline?.process(
+            pixelBuffer: pixelBuffer,
+            sourceTexture: beautyTexture,
+            adjustments: adjustments,
+            filter: activeFilter,
+            commandBuffer: commandBuffer
+        )
+        commandBuffer.commit()
+        return output
+    }
+
+    nonisolated func processCameraFrame(
+        pixelBuffer: CVPixelBuffer,
+        params: BeautyParams,
+        faceContext: FaceContext,
+        adjustments: Adjustments,
+        filter: FilterModel,
+        commandBuffer: MTLCommandBuffer
+    ) -> MTLTexture? {
+        let activeFilter = normalizedFilter(filter)
+        let needsFilter = !adjustments.isDefault || activeFilter.id != "original"
+        let beautyTexture: MTLTexture?
+        if !params.isIdentity, let realtimePipeline {
+            let cpuParams = RealtimeBeautyPipeline.ParamsCPU(
+                smoothing: Float(params.smoothing),
+                whitening: Float(params.whitening),
+                whiteningYUV: Float(params.whiteningYUV),
+                faceCount: Int32(min(faceContext.faces.count, 4))
+            )
+            if needsFilter, realtimePipeline.supportsFusedFilter {
+                return realtimePipeline.process(
+                    pixelBuffer: pixelBuffer,
+                    params: cpuParams,
+                    faceContext: faceContext,
+                    adjustments: adjustments,
+                    filter: activeFilter,
+                    commandBuffer: commandBuffer
+                )
+            } else {
+                beautyTexture = realtimePipeline.process(
+                    pixelBuffer: pixelBuffer,
+                    params: cpuParams,
+                    faceContext: faceContext,
+                    commandBuffer: commandBuffer
                 )
             }
         } else {
@@ -79,12 +144,16 @@ nonisolated final class ImagePipeline: @unchecked Sendable {
         }
 
         guard needsFilter else { return beautyTexture }
-
         return realtimeFilterPipeline?.process(
             pixelBuffer: pixelBuffer,
             sourceTexture: beautyTexture,
             adjustments: adjustments,
-            filter: filter
+            filter: activeFilter,
+            commandBuffer: commandBuffer
         )
+    }
+
+    private nonisolated func normalizedFilter(_ filter: FilterModel) -> FilterModel {
+        filter.id == "auto" ? .original : filter
     }
 }

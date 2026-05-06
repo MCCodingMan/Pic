@@ -31,6 +31,7 @@ nonisolated final class RealtimeBeautyPipeline: @unchecked Sendable {
         var vignette: Float
         var sharpen: Float
         var clarity: Float
+        var grain: Float
     }
 
     private struct ColorMatrixParamsCPU {
@@ -69,12 +70,30 @@ nonisolated final class RealtimeBeautyPipeline: @unchecked Sendable {
     /// 为简化起见，这里直接用 metadata 的归一化 bounds —— Apple 文档保证 .face metadata
     /// 的 bounds 已经是相对于视频帧的归一化坐标。
     nonisolated func process(pixelBuffer: CVPixelBuffer, params: ParamsCPU, faceContext: FaceContext) -> MTLTexture? {
+        guard let commandBuffer = queue.makeCommandBuffer() else { return nil }
+        let output = process(
+            pixelBuffer: pixelBuffer,
+            params: params,
+            faceContext: faceContext,
+            commandBuffer: commandBuffer
+        )
+        commandBuffer.commit()
+        return output
+    }
+
+    nonisolated func process(
+        pixelBuffer: CVPixelBuffer,
+        params: ParamsCPU,
+        faceContext: FaceContext,
+        commandBuffer: MTLCommandBuffer
+    ) -> MTLTexture? {
         processFrame(
             pixelBuffer: pixelBuffer,
             params: params,
             faceContext: faceContext,
             adjustments: nil,
-            filter: nil
+            filter: nil,
+            commandBuffer: commandBuffer
         )
     }
 
@@ -85,12 +104,34 @@ nonisolated final class RealtimeBeautyPipeline: @unchecked Sendable {
         adjustments: Adjustments,
         filter: FilterModel
     ) -> MTLTexture? {
+        guard let commandBuffer = queue.makeCommandBuffer() else { return nil }
+        let output = process(
+            pixelBuffer: pixelBuffer,
+            params: params,
+            faceContext: faceContext,
+            adjustments: adjustments,
+            filter: filter,
+            commandBuffer: commandBuffer
+        )
+        commandBuffer.commit()
+        return output
+    }
+
+    nonisolated func process(
+        pixelBuffer: CVPixelBuffer,
+        params: ParamsCPU,
+        faceContext: FaceContext,
+        adjustments: Adjustments,
+        filter: FilterModel,
+        commandBuffer: MTLCommandBuffer
+    ) -> MTLTexture? {
         processFrame(
             pixelBuffer: pixelBuffer,
             params: params,
             faceContext: faceContext,
             adjustments: adjustments,
-            filter: filter
+            filter: filter,
+            commandBuffer: commandBuffer
         )
     }
 
@@ -99,7 +140,8 @@ nonisolated final class RealtimeBeautyPipeline: @unchecked Sendable {
         params: ParamsCPU,
         faceContext: FaceContext,
         adjustments: Adjustments?,
-        filter: FilterModel?
+        filter: FilterModel?,
+        commandBuffer: MTLCommandBuffer
     ) -> MTLTexture? {
         guard let textureCache else { return nil }
 
@@ -157,8 +199,7 @@ nonisolated final class RealtimeBeautyPipeline: @unchecked Sendable {
 
         var paramsBytes = params
 
-        guard let cmdBuf = queue.makeCommandBuffer(),
-              let enc = cmdBuf.makeComputeCommandEncoder() else { return nil }
+        guard let enc = commandBuffer.makeComputeCommandEncoder() else { return nil }
 
         enc.setComputePipelineState(activePipelineState)
         enc.setTexture(inTex, index: 0)
@@ -181,8 +222,6 @@ nonisolated final class RealtimeBeautyPipeline: @unchecked Sendable {
             threadsPerThreadgroup: MTLSize(width: tw, height: th, depth: 1)
         )
         enc.endEncoding()
-        cmdBuf.commit()
-        // 不等待：MTKView 渲染时会自动同步
         return outTex
     }
 
@@ -199,7 +238,8 @@ nonisolated final class RealtimeBeautyPipeline: @unchecked Sendable {
             tint: Float(combined.tint),
             vignette: Float(combined.vignette),
             sharpen: Float(combined.sharpen),
-            clarity: Float(combined.clarity)
+            clarity: Float(combined.clarity),
+            grain: Float(combined.grain)
         )
     }
 
