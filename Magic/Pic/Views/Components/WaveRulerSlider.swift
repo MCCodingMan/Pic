@@ -60,6 +60,14 @@ struct WaveRulerSlider: View {
     private var safeMinorTickInterval: Int {
         max(minorTickInterval, 1)
     }
+
+    private var defaultMarkerIndex: Int? {
+        guard let defaultMarkerValue else { return nil }
+        let clamped = min(max(defaultMarkerValue, range.lowerBound), range.upperBound)
+        let safeStep = max(step, 0.0001)
+        let rawIndex = ((clamped - range.lowerBound) / safeStep).rounded()
+        return min(max(Int(rawIndex), 0), totalTicks)
+    }
     
     var body: some View {
         VStack(spacing: 0) {
@@ -119,13 +127,6 @@ struct WaveRulerSlider: View {
                         .frame(width: 2, height: rulerHeight)
                         .allowsHitTesting(false)
 
-                    if let markerX = defaultMarkerX(horizontalInset: horizontalInset) {
-                        RoundedRectangle(cornerRadius: 1)
-                            .fill(Color.white.opacity(0.45))
-                            .frame(width: 2, height: 22)
-                            .position(x: markerX, y: 11)
-                            .allowsHitTesting(false)
-                    }
                 }
             }
             .frame(height: rulerContentHeight)
@@ -157,7 +158,7 @@ struct WaveRulerSlider: View {
         }
         
         let tickHeight = isCurrent ? rulerHeight : baseHeight
-        let shouldShowLabel = isMajor || isMinor
+        let shouldShowLabel = (isMajor || isMinor) && defaultMarkerIndex != index
         
         return VStack(spacing: labelSpacing) {
             RoundedRectangle(cornerRadius: tickWidth / 2)
@@ -165,15 +166,27 @@ struct WaveRulerSlider: View {
                 .frame(width: tickWidth, height: tickHeight)
                 .frame(width: tickSpacing, height: rulerHeight, alignment: .bottom)
             
-            if shouldShowLabel {
-                Text(tickLabel(for: index))
-                    .font(.system(size: 9, weight: isMajor ? .semibold : .regular))
-                    .foregroundColor(tickColor)
-                    .fixedSize()
+            ZStack {
+                if shouldShowLabel {
+                    Text(tickLabel(for: index))
+                        .font(.system(size: 9, weight: isMajor ? .semibold : .regular))
+                        .foregroundColor(tickColor)
+                        .fixedSize()
+                        .frame(height: labelHeight)
+                } else {
+                    Color.clear
+                        .frame(height: labelHeight)
+                }
+
+                if defaultMarkerIndex == index {
+                    VStack {
+                        Spacer(minLength: 0)
+                        Circle()
+                            .fill(Color.red)
+                            .frame(width: 6, height: 6)
+                    }
                     .frame(height: labelHeight)
-            } else {
-                Color.clear
-                    .frame(height: labelHeight)
+                }
             }
         }
         .frame(width: tickSpacing, height: rulerContentHeight)
@@ -200,12 +213,4 @@ struct WaveRulerSlider: View {
         index % safeMinorTickInterval == 0
     }
 
-    private func defaultMarkerX(horizontalInset: CGFloat) -> CGFloat? {
-        guard let defaultMarkerValue else { return nil }
-        let clamped = min(max(defaultMarkerValue, range.lowerBound), range.upperBound)
-        let safeStep = max(step, 0.0001)
-        let rawIndex = ((clamped - range.lowerBound) / safeStep).rounded()
-        let markerIndex = min(max(Int(rawIndex), 0), totalTicks)
-        return horizontalInset + CGFloat(markerIndex) * tickSpacing + tickSpacing / 2
-    }
 }

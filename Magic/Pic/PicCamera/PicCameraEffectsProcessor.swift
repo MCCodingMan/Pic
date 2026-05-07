@@ -36,7 +36,7 @@ enum PicCameraEffectsProcessor {
             mtlTexture: texture,
             options: [.colorSpace: rgbColorSpace]
            ) {
-            return processed.oriented(.right)
+            return processed.oriented(.leftMirrored)
         } else {
             let baseImage = CIImage(cvPixelBuffer: pixelBuffer).oriented(.right)
             let adjustedImage = apply(adjustments: adjustments, to: baseImage)

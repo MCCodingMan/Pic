@@ -19,6 +19,7 @@ struct PicCameraView: View {
     @State private var isZoomIndicatorVisible = false
     @State private var zoomIndicatorDismissTask: Task<Void, Never>?
     @State private var captureFlashOpacity: Double = 0
+    @State private var isSideToolbarVisible = false
 
     var body: some View {
         ZStack {
@@ -27,18 +28,13 @@ struct PicCameraView: View {
             if let renderer = viewModel.renderer {
                 VStack {
                     previewContainer(renderer: renderer)
-                        .overlay(alignment: .top) {
-                            PicCameraTopBarView(
-                                viewModel: viewModel,
-                                buttonRotationAngle: buttonRotationAngle,
-                                onClose: { dismiss() }
-                            )
-                        }
                         .animation(.easeInOut(duration: 0.28), value: viewModel.aspectRatio)
                     Spacer()
                 }
             }
         }
+        .contentShape(Rectangle())
+        .gesture(sideToolbarEdgeGesture)
         .overlay(alignment: .bottom) {
             PicCameraBottomOverlayView(
                 viewModel: viewModel,
@@ -50,6 +46,37 @@ struct PicCameraView: View {
                     viewModel.isCapturedPreviewPresented = true
                 }
             )
+        }
+        .overlay(alignment: .trailing) {
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                PicCameraSideWavePanelView(
+                    viewModel: viewModel,
+                    buttonRotationAngle: buttonRotationAngle,
+                    isPresented: $isSideToolbarVisible
+                )
+                .offset(y: -50)
+            }
+            .ignoresSafeArea()
+        }
+        .overlay(alignment: .topLeading) {
+            Button { dismiss() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(DS.ColorToken.textPrimary(scheme))
+                    .frame(width: 36, height: 36)
+                    .background(.ultraThinMaterial)
+                    .clipShape(Circle())
+                    .overlay(
+                        Circle()
+                            .stroke(DS.ColorToken.outline(scheme), lineWidth: 0.5)
+                    )
+                    .dsShadow(.level2)
+                    .rotationEffect(buttonRotationAngle)
+            }
+            .buttonStyle(.plain)
+            .padding(.leading, 12)
+            .padding(.top, 8)
         }
         .overlay {
             if captureFlashOpacity > 0 {
@@ -63,7 +90,7 @@ struct PicCameraView: View {
             VStack(spacing: 8) {
                 if viewModel.deviceOrientation.isLandscape {
                     cameraToast(
-                        message: "当前以竖屏构图保存",
+                        message: "当前以横屏构图保存",
                         systemImage: "iphone",
                         kind: .info
                     )
@@ -200,6 +227,25 @@ struct PicCameraView: View {
         return orientation.isValidInterfaceOrientation ? orientation : .portrait
     }
 
+    private var sideToolbarEdgeGesture: some Gesture {
+        DragGesture(minimumDistance: 18)
+            .onEnded { value in
+                if value.translation.width < -36 {
+                    withAnimation(.easeInOut(duration: 0.28)) {
+                        isSideToolbarVisible = true
+                    }
+                } else if value.translation.width > 36 {
+                    withAnimation(.easeInOut(duration: 0.28)) {
+                        isSideToolbarVisible = false
+                    }
+                }
+            }
+    }
+
+    private var isAnyDetailExpanded: Bool {
+        viewModel.activePanel != nil || viewModel.isApertureControlVisible
+    }
+
     private var buttonRotationAngle: Angle {
         switch viewModel.deviceOrientation {
         case .landscapeLeft:
@@ -286,6 +332,14 @@ struct PicCameraView: View {
     private func focusGesture() -> some Gesture {
         SpatialTapGesture()
             .onEnded { value in
+                if isAnyDetailExpanded {
+                    withAnimation(.easeInOut(duration: 0.28)) {
+                        viewModel.dismissExpandedDetails()
+                        isSideToolbarVisible = false
+                    }
+                    return
+                }
+
                 guard previewRect.size.width > 0, previewRect.size.height > 0 else { return }
                 showFocusIndicator(at: value.location)
                 let normalizedPoint = CGPoint(

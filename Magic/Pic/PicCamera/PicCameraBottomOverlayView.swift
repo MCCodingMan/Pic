@@ -14,13 +14,16 @@ struct PicCameraBottomOverlayView: View {
             Spacer()
 
             secondaryControlsOverlay
+                .padding(.horizontal, 30)
 
             if viewModel.activePanel == .filter, viewModel.shouldShowFilterOptions {
                 filterOptionsRow
+                    .padding(.horizontal, 30)
             }
 
             if let activePanel = viewModel.activePanel {
                 firstLevelRow(for: activePanel)
+                    .padding(.horizontal, 30)
             }
             bottomControls
             bottomBar
@@ -38,18 +41,6 @@ struct PicCameraBottomOverlayView: View {
                         .scaledToFill()
                         .frame(width: 52, height: 52)
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(DS.ColorToken.textPrimary(scheme).opacity(0.75), lineWidth: 1)
-                        )
-                        .overlay(alignment: .bottomTrailing) {
-                            Image(systemName: "arrow.up.left.and.arrow.down.right")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundStyle(DS.ColorToken.onBrand)
-                                .padding(4)
-                                .background(Circle().fill(.black.opacity(0.55)))
-                                .offset(x: 4, y: 4)
-                        }
                 }
                 .buttonStyle(.plain)
                 .disabled(viewModel.isCapturing)
@@ -59,8 +50,7 @@ struct PicCameraBottomOverlayView: View {
                     .frame(width: 52, height: 52)
             }
             Spacer()
-            PicSegmentedControl(items: PicCameraMode.allCases, selectedItem: modeBinding)
-                .rotationEffect(buttonRotationAngle)
+            PicSegmentedControl(items: PicCameraMode.allCases, selectedItem: modeBinding, buttonRotationAngle: buttonRotationAngle)
             Spacer()
             Button {
                 Task { await viewModel.switchCameraPosition() }
@@ -101,8 +91,10 @@ struct PicCameraBottomOverlayView: View {
                         get: { selected.getValue(from: viewModel.adjustments) },
                         set: { viewModel.updateAdjustment(selected, value: $0) }
                     ),
-                    range: selected.range
+                    range: selected.range,
+                    defaultRawValue: selected.defaultValue
                 )
+                .id(selected.id)
             } else if viewModel.activePanel == .beauty, let control = viewModel.selectedBeautyControl {
                 parameterSliderCard(
                     value: Binding(
@@ -134,34 +126,47 @@ struct PicCameraBottomOverlayView: View {
     }
 
     private var apertureSliderCard: some View {
-        VStack(spacing: 6) {
-            Text(String(format: "f%.1f", viewModel.portraitAperture))
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(DS.ColorToken.textPrimary(scheme))
+        let displayValue = Binding<Double>(
+            get: { (viewModel.portraitAperture * 10).rounded() },
+            set: { viewModel.updatePortraitAperture($0 / 10) }
+        )
+        let displayRange = (viewModel.portraitApertureRange.lowerBound * 10)...(viewModel.portraitApertureRange.upperBound * 10)
 
-            PillSlider(
-                value: Binding(
-                    get: { viewModel.portraitAperture },
-                    set: { viewModel.updatePortraitAperture($0) }
-                ),
-                range: viewModel.portraitApertureRange,
-                tintColor: DS.ColorToken.warning(scheme),
-                trackHeight: 32,
-                thumbSize: 24,
-                valueStr: nil
+        return VStack(spacing: 6) {
+            HStack(spacing: 4) {
+                Image(systemName: "f.cursive")
+                Text(String(format: "%.1f", viewModel.portraitAperture))
+            }
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundColor(DS.ColorToken.textPrimary(scheme))
+
+            WaveRulerSlider(
+                value: displayValue,
+                range: displayRange,
+                step: 1,
+                majorTickInterval: 10,
+                minorTickInterval: 5,
+                showValue: false,
+                defaultMarkerValue: 0
             )
-            .frame(height: 32)
+            .padding(.vertical, 8)
+            .background(.ultraThinMaterial, in: Capsule(style: .continuous))
+            .overlay {
+                Capsule(style: .continuous)
+                    .stroke(.white.opacity(0.18), lineWidth: 1)
+            }
+            .padding(.horizontal, 20)
         }
         .padding(.horizontal, 2)
     }
 
     private func parameterSliderCard(
         value: Binding<Double>,
-        range: ClosedRange<Double>
+        range: ClosedRange<Double>,
+        defaultRawValue: Double = 0
     ) -> some View {
         let config = normalizedWaveSliderConfig(from: range)
-        let defaultRawValue = min(max(0, config.rawRange.lowerBound), config.rawRange.upperBound)
-        let defaultDisplayValue = (defaultRawValue * config.scale).rounded()
+        let defaultDisplayValue = (min(max(defaultRawValue, config.rawRange.lowerBound), config.rawRange.upperBound) * config.scale).rounded()
         let displayValue = Binding<Double>(
             get: {
                 let raw = min(max(value.wrappedValue, config.rawRange.lowerBound), config.rawRange.upperBound)
@@ -184,9 +189,10 @@ struct PicCameraBottomOverlayView: View {
             defaultMarkerValue: defaultDisplayValue
         )
         .padding(.vertical, 12)
-        .background {
-            DS.ColorToken.onBlack.opacity(0.2)
-                .clipShape(.capsule)
+        .background(.ultraThinMaterial, in: Capsule(style: .continuous))
+        .overlay {
+            Capsule(style: .continuous)
+                .stroke(.white.opacity(0.18), lineWidth: 1)
         }
         .padding(.horizontal, 20)
     }
@@ -398,10 +404,15 @@ struct PicCameraBottomOverlayView: View {
                 .lineLimit(1)
                 .padding(.vertical, 8)
                 .padding(.horizontal, 12)
-                .background(
-                    Capsule()
+                .background(.ultraThinMaterial, in: Capsule(style: .continuous))
+                .overlay {
+                    Capsule(style: .continuous)
                         .fill(chipBackground(isSelected: isSelected, isModified: isModified, accent: accent))
-                )
+                }
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(.white.opacity(0.16), lineWidth: 1)
+                }
         }
         .buttonStyle(.plain)
     }
@@ -412,11 +423,15 @@ struct PicCameraBottomOverlayView: View {
         } label: {
             ZStack {
                 Circle()
-                    .stroke(DS.ColorToken.textPrimary(scheme), lineWidth: 4)
+                    .stroke(DS.ColorToken.surface(scheme), lineWidth: 4)
                     .frame(width: 62, height: 62)
                 Circle()
-                    .fill(DS.ColorToken.textPrimary(scheme))
+                    .fill(.ultraThinMaterial)
                     .frame(width: 52, height: 52)
+                    .overlay(
+                        Circle()
+                            .stroke(.white.opacity(0.18), lineWidth: 1)
+                    )
                 if viewModel.isCapturing || viewModel.isSavingCapture {
                     ProgressView()
                         .tint(DS.ColorToken.surface(scheme))

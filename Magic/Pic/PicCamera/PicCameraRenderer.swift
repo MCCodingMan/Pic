@@ -270,7 +270,7 @@ final class PicCameraRenderer: NSObject, MTKViewDelegate, @unchecked Sendable {
         let processedImage: CIImage
         if let previewTexture,
            let ciImage = CIImage(mtlTexture: previewTexture, options: [.colorSpace: colorSpace]) {
-            processedImage = ciImage.oriented(.right)
+            processedImage = ciImage.oriented(.leftMirrored)
         } else {
             processedImage = PicCameraEffectsProcessor.makePreviewImage(
                 pixelBuffer: pixelBuffer,

@@ -15,22 +15,3 @@ struct MagicApp: App {
         }
     }
 }
-
-// MARK: - Demo
-
-struct DemoView: View {
-    @State private var value: Double = 50
-    @State var selectedItem: PicCameraMode = .photo
-    var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            
-            PicSegmentedControl(items: [.photo, .portrait], selectedItem: $selectedItem)
-        }
-    }
-}
-
-#Preview {
-    DemoView()
-}
-

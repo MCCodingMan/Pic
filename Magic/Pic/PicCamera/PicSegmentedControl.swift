@@ -4,6 +4,7 @@ struct PicSegmentedControl: View {
     @Environment(\.colorScheme) private var scheme
     let items: [PicCameraMode]
     @Binding var selectedItem: PicCameraMode
+    let buttonRotationAngle: Angle
 
     @Namespace private var matchNamespace
 
@@ -18,6 +19,7 @@ struct PicSegmentedControl: View {
                     Image(systemName: item.iconName)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(selectedItem == item ? DS.ColorToken.surface(scheme) : DS.ColorToken.textPrimary(scheme).opacity(0.78))
+                        .rotationEffect(buttonRotationAngle)
                         .padding(.vertical, 8)
                         .padding(.horizontal, 12)
                         .frame(minWidth: 44)

@@ -489,8 +489,8 @@ final class PicCameraService: NSObject, @unchecked Sendable {
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
         ]
         videoOutput.alwaysDiscardsLateVideoFrames = true
-        depthOutput.isFilteringEnabled = false
-        depthOutput.alwaysDiscardsLateDepthData = true
+//        depthOutput.isFilteringEnabled = true
+//        depthOutput.alwaysDiscardsLateDepthData = true
 
         guard session.canAddOutput(videoOutput),
               session.canAddOutput(photoOutput),
@@ -623,7 +623,6 @@ final class PicCameraService: NSObject, @unchecked Sendable {
         do {
             try device.lockForConfiguration()
             device.videoZoomFactor = defaultRawZoomFactor(for: device)
-            applyFrameRateConfiguration(to: device)
             if let depthFormat = preferredDepthFormat(for: device) {
                 device.activeDepthDataFormat = depthFormat
             }

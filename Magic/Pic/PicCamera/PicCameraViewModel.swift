@@ -660,6 +660,25 @@ final class PicCameraViewModel {
         }
     }
 
+    func dismissExpandedDetails() {
+        if isApertureControlVisible {
+            toggleApertureControl()
+            return
+        }
+
+        guard let activePanel else { return }
+        switch activePanel {
+        case .beauty:
+            toggleBeautyPanel()
+        case .quickBeauty:
+            toggleQuickBeautyPanel()
+        case .filter:
+            toggleFilterPanel()
+        case .adjust:
+            toggleAdjustPanel()
+        }
+    }
+
     func showToolbarHint(_ text: String) {
         showCameraToast(text, systemImage: "info.circle.fill", kind: .info)
     }
@@ -956,7 +975,8 @@ final class PicCameraViewModel {
             handleCaptureError(nil)
             return
         }
-        let aspect = aspectRatio.portraitAspect
+        let outputOrientation = captureImageOrientation()
+        let aspect = captureAspectRatio()
         let beautyParams = beautyParams
         let selectedFilter = effectiveFilter
         let currentFaceContext = renderer?.currentFaceContextSnapshot() ?? liveFaceContext
@@ -980,9 +1000,9 @@ final class PicCameraViewModel {
                 if let depthData,
                    let ciImage = CIImage(data: data),
                    let result = renderer?.depthBlurImage(
-                    image: ciImage.oriented(.right),
+                    image: ciImage.oriented(outputOrientation),
                     depthData: depthData,
-                    orientation: .right,
+                    orientation: outputOrientation,
                     aperture: aperture
                    ) {
                     outputImage = result.cropCIImage(aspectRatio: aspect).uiImage
@@ -1017,14 +1037,14 @@ final class PicCameraViewModel {
             ) {
                 if let depthData,
                    let depthImage = renderer?.depthBlurImage(
-                    image: resultCiImage.oriented(.right),
+                    image: resultCiImage.oriented(outputOrientation),
                     depthData: depthData,
-                    orientation: .right,
+                    orientation: outputOrientation,
                     aperture: aperture
                    ) {
                     outputImage = depthImage.cropCIImage(aspectRatio: aspect).uiImage
                 } else {
-                    outputImage = resultCiImage.oriented(.right).cropCIImage(aspectRatio: aspect).uiImage
+                    outputImage = resultCiImage.oriented(outputOrientation).cropCIImage(aspectRatio: aspect).uiImage
                 }
             } else {
                 outputImage = nil
@@ -1054,7 +1074,7 @@ final class PicCameraViewModel {
             || !adjustments.isDefault
             || hasActiveFilter
 
-        let aspect = aspectRatio.portraitAspect
+        let aspect = captureAspectRatio()
         Task.detached(priority: .userInitiated) {
             guard let image = UIImage(data: data) else {
                 await MainActor.run { [weak self] in self?.handleCaptureError(nil) }
@@ -1152,6 +1172,28 @@ final class PicCameraViewModel {
         isShowingSaveError = true
         showCameraToast("拍摄失败", systemImage: "exclamationmark.triangle.fill", kind: .error)
         UINotificationFeedbackGenerator().notificationOccurred(.error)
+    }
+
+    private func captureAspectRatio() -> CGFloat {
+        if deviceOrientation.isLandscape {
+            return 1 / aspectRatio.portraitAspect
+        }
+        return aspectRatio.portraitAspect
+    }
+
+    private func captureImageOrientation() -> CGImagePropertyOrientation {
+        switch deviceOrientation {
+        case .portrait:
+            return .right
+        case .portraitUpsideDown:
+            return .left
+        case .landscapeLeft:
+            return .up
+        case .landscapeRight:
+            return .down
+        default:
+            return .right
+        }
     }
 
     private func showCameraToast(
