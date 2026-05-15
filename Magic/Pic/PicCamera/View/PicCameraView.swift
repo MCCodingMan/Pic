@@ -6,7 +6,6 @@ struct PicCameraView: View {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.dismiss) private var dismiss
     @State private var viewModel = PicCameraViewModel()
-    @State private var pinchStartZoomFactor: CGFloat?
     @State private var levelAngle: Double = 0
     @State private var motionReader = PicCameraLevelMotionReader()
     @State private var previewRect: CGRect = .zero
@@ -16,8 +15,6 @@ struct PicCameraView: View {
     @State private var focusIndicator: FocusIndicator?
     @State private var isFocusIndicatorVisible = false
     @State private var focusIndicatorDismissTask: Task<Void, Never>?
-    @State private var isZoomIndicatorVisible = false
-    @State private var zoomIndicatorDismissTask: Task<Void, Never>?
     @State private var captureFlashOpacity: Double = 0
     @State private var isSideToolbarVisible = false
 
@@ -40,7 +37,7 @@ struct PicCameraView: View {
                 viewModel: viewModel,
                 modeBinding: modeBinding,
                 buttonRotationAngle: buttonRotationAngle,
-                isZoomIndicatorVisible: isZoomIndicatorVisible,
+                isZoomIndicatorVisible: false,
                 onPreviewCapturedImage: {
                     guard viewModel.capturedImage != nil else { return }
                     viewModel.isCapturedPreviewPresented = true
@@ -154,7 +151,6 @@ struct PicCameraView: View {
             UIDevice.current.endGeneratingDeviceOrientationNotifications()
             motionReader.stop()
             focusIndicatorDismissTask?.cancel()
-            zoomIndicatorDismissTask?.cancel()
             viewModel.persistHistoryIfNeeded()
             viewModel.onDisappear()
         }
@@ -267,7 +263,6 @@ struct PicCameraView: View {
         )
             .contentShape(.rect)
             .simultaneousGesture(focusGesture())
-            .simultaneousGesture(pinchZoomGesture())
             .blur(radius: previewBlurRadius)
             .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .local) }, action: {
                 previewRect = $0
@@ -286,6 +281,19 @@ struct PicCameraView: View {
                     PicCameraGridView()
                         .stroke(DS.ColorToken.textPrimary(scheme).opacity(0.32), lineWidth: 1)
                         .allowsHitTesting(false)
+                }
+            }
+            .overlay {
+                if viewModel.activePanel == .composition || viewModel.selectedCompositionPoseName != nil {
+                    PicCameraPortraitCompositionGuideView(
+                        aspectRatio: viewModel.aspectRatio,
+                        deviceOrientation: viewModel.deviceOrientation,
+                        category: viewModel.selectedCompositionCategory,
+                        position: viewModel.selectedCompositionPosition,
+                        poseName: viewModel.selectedCompositionPoseName,
+                        rotationAngle: buttonRotationAngle
+                    )
+                    .allowsHitTesting(false)
                 }
             }
             .overlay {
@@ -404,42 +412,9 @@ struct PicCameraView: View {
         }
     }
 
-    private func pinchZoomGesture() -> some Gesture {
-        MagnificationGesture()
-            .onChanged { value in
-                if pinchStartZoomFactor == nil {
-                    pinchStartZoomFactor = viewModel.selectedZoomFactor
-                }
-                showZoomIndicator()
-                let baseZoom = pinchStartZoomFactor ?? viewModel.selectedZoomFactor
-                viewModel.requestZoomFactor(baseZoom * value)
-            }
-            .onEnded { _ in
-                pinchStartZoomFactor = nil
-                Task { await viewModel.flushRequestedZoomFactor() }
-                scheduleZoomIndicatorDismiss()
-            }
-    }
-
-    private func showZoomIndicator() {
-        isZoomIndicatorVisible = true
-        scheduleZoomIndicatorDismiss()
-    }
-
     private func startLevelUpdates() {
         motionReader.start { angle in
             levelAngle = angle
-        }
-    }
-
-    private func scheduleZoomIndicatorDismiss() {
-        zoomIndicatorDismissTask?.cancel()
-        zoomIndicatorDismissTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(3))
-            guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.2)) {
-                isZoomIndicatorVisible = false
-            }
         }
     }
 

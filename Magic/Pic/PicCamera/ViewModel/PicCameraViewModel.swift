@@ -3,80 +3,6 @@ import Observation
 import UIKit
 internal import AVFoundation
 
-enum PicCameraAspectRatio: String, CaseIterable, Identifiable {
-    case ratio1x1 = "1:1"
-    case ratio3x4 = "3:4"
-    case ratio9x16 = "9:16"
-
-    var id: String { rawValue }
-
-    var portraitAspect: CGFloat {
-        switch self {
-        case .ratio1x1: return 1.0
-        case .ratio3x4: return 3.0 / 4.0
-        case .ratio9x16: return 9.0 / 16.0
-        }
-    }
-}
-
-enum PicCameraSwitchOption: String, CaseIterable, Identifiable {
-    case off = "关"
-    case on = "开"
-
-    var id: String { rawValue }
-
-    var isEnabled: Bool {
-        self == .on
-    }
-
-    init(_ isEnabled: Bool) {
-        self = isEnabled ? .on : .off
-    }
-}
-
-enum PicCameraFlashOption: String, CaseIterable, Identifiable {
-    case off = "关闭"
-    case auto = "自动"
-    case on = "开启"
-
-    var id: String { rawValue }
-
-    init(mode: AVCaptureDevice.FlashMode) {
-        switch mode {
-        case .off:
-            self = .off
-        case .auto:
-            self = .auto
-        case .on:
-            self = .on
-        @unknown default:
-            self = .off
-        }
-    }
-
-    var flashMode: AVCaptureDevice.FlashMode {
-        switch self {
-        case .off:
-            return .off
-        case .auto:
-            return .auto
-        case .on:
-            return .on
-        }
-    }
-}
-
-struct PicCameraToast: Equatable {
-    enum Kind: Equatable {
-        case info
-        case success
-        case error
-    }
-
-    let message: String
-    let systemImage: String
-    let kind: Kind
-}
 
 @MainActor
 @Observable
@@ -86,6 +12,7 @@ final class PicCameraViewModel {
         case quickBeauty
         case filter
         case adjust
+        case composition
     }
 
     enum BeautyControl: String, CaseIterable, Identifiable {
@@ -122,7 +49,7 @@ final class PicCameraViewModel {
     }
 
     let service = PicCameraService()
-    let renderer: PicCameraRenderer? = PicCameraRenderer.make()
+    let renderer = PicCameraRenderer.make()
 
     var mode: PicCameraMode = .photo
     var authorizationStatus: AVAuthorizationStatus = .notDetermined
@@ -155,14 +82,20 @@ final class PicCameraViewModel {
     var selectedBeautyControl: BeautyControl?
     var selectedFilterPanelCategory: FilterPanelCategory = .auto
     var selectedFilter: FilterModel = .original
+    var selectedCompositionCategory: CompositionCategory = .portrait
+    var selectedCompositionPosition: CompositionPosition?
+    var selectedCompositionPoseName: String?
     var isAutoFilterEnabled = false
     var portraitAperture: Double = 8
     var isPortraitDepthUnavailable = false
     var isApertureControlVisible = false
     var adjustments = Adjustments()
     var selectedAdjustment: AdjustmentType?
-    var toolbarActions: [ToolbarAction] = [.beauty, .quickBeauty, .adjust, .filter, .autoFilter, .flash, .livePhoto, .settings]
+    var toolbarActions: [ToolbarAction] = [.beauty, .quickBeauty, .adjust, .filter, .composition, .autoFilter, .flash, .livePhoto, .settings]
     private(set) var availableFilters: [String: [FilterModel]] = [:]
+    private let photoZoomRange: ClosedRange<CGFloat> = 0.5...8
+    private let portraitZoomRange: ClosedRange<CGFloat> = 1...4
+    private var zoomDisplayMultiplier: CGFloat = 1
 
     private var bridge: Bridge?
     @ObservationIgnored private var toastDismissTask: Task<Void, Never>?
@@ -254,6 +187,9 @@ final class PicCameraViewModel {
         isConfigurationFailed = false
         await service.startSession()
         refreshControls()
+        zoomDisplayMultiplier = await service.currentDisplayVideoZoomFactorMultiplier()
+        let currentRawZoomFactor = await service.currentZoomFactor()
+        selectedZoomFactor = currentRawZoomFactor * zoomDisplayMultiplier
         if isHistorySettingsEnabled {
             await applySavedStateOnAppear()
         } else {
@@ -294,7 +230,8 @@ final class PicCameraViewModel {
             }
             isConfigurationFailed = false
             refreshControls()
-            selectedZoomFactor = await service.setZoomFactor(requestedZoomFactor)
+            zoomDisplayMultiplier = await service.currentDisplayVideoZoomFactorMultiplier()
+            await applyZoomFactor(requestedZoomFactor)
             if isPortraitDepthUnavailable {
                 showCameraToast("当前设备不支持真实景深", systemImage: "person.crop.rectangle.badge.exclamationmark", kind: .info)
             }
@@ -307,29 +244,6 @@ final class PicCameraViewModel {
 
     func focus(at normalizedPoint: CGPoint) async {
         await service.focus(at: normalizedPoint)
-    }
-
-    func setZoomFactor(_ factor: CGFloat) async {
-        zoomApplyTask?.cancel()
-        selectedZoomFactor = await service.setZoomFactor(factor)
-    }
-
-    func requestZoomFactor(_ factor: CGFloat) {
-        let clampedPreviewValue = min(max(factor, 0.5), 40)
-        selectedZoomFactor = clampedPreviewValue
-        zoomApplyTask?.cancel()
-        zoomApplyTask = Task { @MainActor [weak self] in
-            await Task.yield()
-            guard !Task.isCancelled, let self else { return }
-            let applied = await self.service.setZoomFactor(clampedPreviewValue)
-            guard !Task.isCancelled else { return }
-            self.selectedZoomFactor = applied
-        }
-    }
-
-    func flushRequestedZoomFactor() async {
-        zoomApplyTask?.cancel()
-        selectedZoomFactor = await service.setZoomFactor(selectedZoomFactor)
     }
 
     func toggleFlash() {
@@ -359,7 +273,8 @@ final class PicCameraViewModel {
         if success {
             isConfigurationFailed = false
             refreshControls()
-            selectedZoomFactor = await service.setZoomFactor(requestedZoomFactor)
+            zoomDisplayMultiplier = await service.currentDisplayVideoZoomFactorMultiplier()
+            await applyZoomFactor(requestedZoomFactor)
             if isPortraitDepthUnavailable {
                 showCameraToast("当前设备不支持真实景深", systemImage: "person.crop.rectangle.badge.exclamationmark", kind: .info)
             }
@@ -378,14 +293,21 @@ final class PicCameraViewModel {
     }
 
     func cycleAspectRatio() {
-        let all = PicCameraAspectRatio.allCases
+        let all: [PicCameraAspectRatio] = deviceOrientation.isLandscape
+        ? [.ratio1x1, .ratio9x16, .ratio3x4]
+        : PicCameraAspectRatio.allCases
         guard let currentIndex = all.firstIndex(of: aspectRatio) else {
             aspectRatio = .ratio9x16
             return
         }
         let nextIndex = all.index(after: currentIndex)
         aspectRatio = nextIndex == all.endIndex ? all[all.startIndex] : all[nextIndex]
-        showCameraToast("当前比例 \(aspectRatio.rawValue)", systemImage: aspectRatioIconName, kind: .info)
+        normalizeCompositionSelection()
+        showCameraToast(
+            "当前比例 \(aspectRatio.displayName(isLandscape: deviceOrientation.isLandscape))",
+            systemImage: aspectRatioIconName,
+            kind: .info
+        )
     }
 
     func toggleAutoFilter() {
@@ -436,6 +358,45 @@ final class PicCameraViewModel {
     func updateDeviceOrientation(_ orientation: UIDeviceOrientation) {
         guard orientation.isValidInterfaceOrientation else { return }
         deviceOrientation = orientation
+        normalizeCompositionSelection()
+    }
+
+    func setZoomFactor(_ factor: CGFloat) {
+        let zoomRange = currentZoomRange()
+        let clampedDisplay = min(max(factor, zoomRange.lowerBound), zoomRange.upperBound)
+        selectedZoomFactor = clampedDisplay
+        let multiplier = max(zoomDisplayMultiplier, 0.0001)
+        let targetRawFactor = clampedDisplay / multiplier
+        zoomApplyTask?.cancel()
+        zoomApplyTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let appliedRaw = await service.setZoomFactor(targetRawFactor, preferredRange: rawZoomRange())
+            selectedZoomFactor = appliedRaw * zoomDisplayMultiplier
+        }
+    }
+
+    func applyZoomFactor(_ factor: CGFloat) async {
+        let zoomRange = currentZoomRange()
+        let clampedDisplay = min(max(factor, zoomRange.lowerBound), zoomRange.upperBound)
+        let multiplier = max(zoomDisplayMultiplier, 0.0001)
+        let targetRawFactor = clampedDisplay / multiplier
+        let appliedRaw = await service.setZoomFactor(targetRawFactor, preferredRange: rawZoomRange())
+        selectedZoomFactor = appliedRaw * zoomDisplayMultiplier
+    }
+
+    private func rawZoomRange() -> ClosedRange<CGFloat> {
+        let zoomRange = currentZoomRange()
+        let multiplier = max(zoomDisplayMultiplier, 0.0001)
+        return (zoomRange.lowerBound / multiplier)...(zoomRange.upperBound / multiplier)
+    }
+
+    private func currentZoomRange() -> ClosedRange<CGFloat> {
+        mode == .portrait ? portraitZoomRange : photoZoomRange
+    }
+
+    private func clampedZoomFactorForCurrentMode(_ factor: CGFloat) -> CGFloat {
+        let range = currentZoomRange()
+        return min(max(factor, range.lowerBound), range.upperBound)
     }
 
     func toggleBeautyPanel() {
@@ -473,6 +434,15 @@ final class PicCameraViewModel {
         activePanel = activePanel == .filter ? nil : .filter
         if activePanel == .filter {
             selectedAdjustment = nil
+        }
+    }
+
+    func toggleCompositionPanel() {
+        activePanel = activePanel == .composition ? nil : .composition
+        if activePanel == .composition {
+            selectedBeautyControl = nil
+            selectedAdjustment = nil
+            normalizeCompositionSelection()
         }
     }
 
@@ -594,6 +564,58 @@ final class PicCameraViewModel {
         syncRenderState()
     }
 
+    func selectCompositionCategory(_ category: CompositionCategory) {
+        activePanel = .composition
+        selectedCompositionCategory = category
+        normalizeCompositionSelection()
+    }
+
+    func selectCompositionPosition(_ position: CompositionPosition) {
+        activePanel = .composition
+        selectedCompositionPosition = position
+    }
+
+    func selectCompositionPoseName(_ poseName: String) {
+        activePanel = .composition
+        if selectedCompositionPoseName == poseName {
+            selectedCompositionPoseName = nil
+        } else {
+            selectedCompositionPoseName = poseName
+        }
+    }
+
+    func compositionPositions() -> [CompositionPosition] {
+        CompositionPosition.recommendations(
+            category: selectedCompositionCategory,
+            aspectRatio: aspectRatio,
+            isLandscape: deviceOrientation.isLandscape
+        )
+    }
+
+    func compositionPoseNames() -> [String] {
+        let prefix = recommendedCompositionPoseKind == .halfBody ? "h" : "f"
+        let count = recommendedCompositionPoseKind == .halfBody ? 5 : 25
+        return (1...count).map { "\(prefix)_\($0)" }
+    }
+
+    var recommendedCompositionPoseKind: CompositionPoseKind {
+        if !deviceOrientation.isLandscape, aspectRatio == .ratio1x1 {
+            return .halfBody
+        }
+        return .fullBody
+    }
+
+    private func normalizeCompositionSelection() {
+        let positions = compositionPositions()
+        if selectedCompositionPosition.map({ !positions.contains($0) }) ?? true {
+            selectedCompositionPosition = positions.first
+        }
+        let poses = compositionPoseNames()
+        if selectedCompositionPoseName.map({ !poses.contains($0) }) ?? true {
+            selectedCompositionPoseName = poses.first
+        }
+    }
+
     func setFilter(_ filter: FilterModel) {
         if !isAutoFilterEnabled, selectedFilter == filter, filter != .original {
             selectedFilter = .original
@@ -676,6 +698,8 @@ final class PicCameraViewModel {
             toggleFilterPanel()
         case .adjust:
             toggleAdjustPanel()
+        case .composition:
+            toggleCompositionPanel()
         }
     }
 
@@ -704,6 +728,8 @@ final class PicCameraViewModel {
             activePanel == .adjust
         case .filter:
             activePanel == .filter
+        case .composition:
+            activePanel == .composition
         case .autoFilter:
             isAutoFilterEnabled
         case .flash:
@@ -725,13 +751,12 @@ final class PicCameraViewModel {
             !adjustments.isDefault
         case .filter:
             isFilterModified
-        case .autoFilter, .flash, .livePhoto, .settings:
+        case .composition, .autoFilter, .flash, .livePhoto, .settings:
             false
         }
     }
 
     private func refreshControls() {
-        selectedZoomFactor = service.currentZoomFactor()
         supportsFlash = service.supportsFlash()
         flashMode = service.currentFlashMode()
         supportsLivePhoto = service.supportsLivePhoto()
@@ -755,14 +780,7 @@ final class PicCameraViewModel {
     }
 
     private var aspectRatioIconName: String {
-        switch aspectRatio {
-        case .ratio1x1:
-            return "square"
-        case .ratio3x4:
-            return "rectangle.ratio.3.to.4"
-        case .ratio9x16:
-            return "rectangle.ratio.9.to.16"
-        }
+        aspectRatio.iconName(isLandscape: deviceOrientation.isLandscape)
     }
 
     private func showToolbarIntroIfNeeded() {
@@ -799,8 +817,8 @@ final class PicCameraViewModel {
         }
 
         setLivePhotoEnabled(savedState.isLivePhotoEnabled)
-        await setZoomFactor(CGFloat(savedState.zoomFactor))
         applyNonServiceState(savedState)
+        await applyZoomFactor(CGFloat(savedState.zoomFactor))
         persistHistoryIfNeeded()
     }
 
@@ -813,7 +831,6 @@ final class PicCameraViewModel {
         }
         setFlashOption(.off)
         setLivePhotoEnabled(false)
-        await setZoomFactor(1)
         applyDefaultNonServiceState()
         PicCameraHistoryPersistence.clearState()
     }
@@ -822,6 +839,7 @@ final class PicCameraViewModel {
         if let savedMode = PicCameraMode(rawValue: savedState.modeRawValue) {
             mode = savedMode
         }
+        selectedZoomFactor = clampedZoomFactorForCurrentMode(CGFloat(savedState.zoomFactor))
         if let savedRatio = PicCameraAspectRatio(rawValue: savedState.aspectRatioRawValue) {
             aspectRatio = savedRatio
         } else {
@@ -864,10 +882,14 @@ final class PicCameraViewModel {
         isAutoFilterEnabled = false
         selectedFilter = .original
         selectedFilterPanelCategory = .auto
+        selectedCompositionCategory = .portrait
+        selectedCompositionPosition = nil
+        selectedCompositionPoseName = nil
         activePanel = nil
         selectedBeautyControl = nil
         selectedAdjustment = nil
         isApertureControlVisible = false
+        selectedZoomFactor = 1
         syncRenderState()
     }
 
@@ -1227,11 +1249,75 @@ final class PicCameraViewModel {
 }
 
 extension PicCameraViewModel {
+    enum CompositionCategory: String, Identifiable, CaseIterable {
+        case portrait = "人物"
+        case scenery = "风景"
+
+        var id: String { rawValue }
+    }
+
+    enum CompositionPoseKind {
+        case halfBody
+        case fullBody
+
+        var title: String {
+            switch self {
+            case .halfBody: return "推荐半身"
+            case .fullBody: return "推荐全身"
+            }
+        }
+    }
+
+    enum CompositionPosition: String, Identifiable, CaseIterable {
+        case centered = "居中"
+        case slightSide = "略偏一侧"
+        case lowerThird = "下 1/3"
+        case leftThird = "左三分"
+        case rightThird = "右三分"
+        case eyeThird = "眼睛上 1/3"
+        case leadingSpace = "视线留白"
+        case foreground = "前景引导"
+        case horizonThird = "地平线 1/3"
+        case wideScene = "人景开阔"
+
+        var id: String { rawValue }
+
+        static func recommendations(
+            category: CompositionCategory,
+            aspectRatio: PicCameraAspectRatio,
+            isLandscape: Bool
+        ) -> [CompositionPosition] {
+            switch (category, aspectRatio, isLandscape) {
+            case (.portrait, .ratio1x1, _):
+                return [.centered, .slightSide, .eyeThird]
+            case (.portrait, .ratio3x4, false):
+                return [.eyeThird, .centered, .slightSide]
+            case (.portrait, .ratio9x16, false):
+                return [.lowerThird, .leftThird, .rightThird]
+            case (.portrait, .ratio3x4, true):
+                return [.leftThird, .rightThird, .wideScene]
+            case (.portrait, .ratio9x16, true):
+                return [.leftThird, .rightThird, .leadingSpace]
+            case (.scenery, .ratio1x1, _):
+                return [.centered, .foreground, .horizonThird]
+            case (.scenery, .ratio3x4, false):
+                return [.horizonThird, .foreground, .wideScene]
+            case (.scenery, .ratio9x16, false):
+                return [.foreground, .lowerThird, .horizonThird]
+            case (.scenery, .ratio3x4, true):
+                return [.horizonThird, .leftThird, .rightThird]
+            case (.scenery, .ratio9x16, true):
+                return [.wideScene, .leftThird, .rightThird]
+            }
+        }
+    }
+
     enum ToolbarAction: String, Identifiable, CaseIterable {
         case beauty
         case quickBeauty
         case adjust
         case filter
+        case composition
         case autoFilter
         case flash
         case livePhoto
@@ -1245,6 +1331,7 @@ extension PicCameraViewModel {
             case .quickBeauty: return "wand.and.stars.inverse"
             case .adjust: return "dial.medium"
             case .filter: return "camera.filters"
+            case .composition: return "person.crop.rectangle"
             case .autoFilter: return "wand.and.stars"
             case .flash: return "bolt.fill"
             case .livePhoto: return "livephoto"
