@@ -4,50 +4,6 @@ import CoreVideo
 import CoreMedia
 import QuartzCore
 
-enum PicCameraMode: String, CaseIterable, Identifiable {
-    case photo
-    case portrait
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .photo:
-            return "拍照"
-        case .portrait:
-            return "人像"
-        }
-    }
-
-    var iconName: String {
-        switch self {
-        case .photo:
-            return "camera"
-        case .portrait:
-            return "person.crop.square"
-        }
-    }
-
-    func deviceTypes(for position: AVCaptureDevice.Position) -> [AVCaptureDevice.DeviceType] {
-        switch (self, position) {
-        case (.photo, .back):
-            return [.builtInTripleCamera, .builtInDualWideCamera, .builtInDualCamera, .builtInWideAngleCamera]
-        case (.photo, .front):
-            return [.builtInWideAngleCamera, .builtInTrueDepthCamera]
-        case (.portrait, .back):
-            // Portrait should work on more devices, not only LiDAR-capable ones.
-            return [.builtInLiDARDepthCamera, .builtInTripleCamera, .builtInDualWideCamera, .builtInDualCamera, .builtInWideAngleCamera]
-        case (.portrait, .front):
-            return [.builtInTrueDepthCamera, .builtInWideAngleCamera]
-        default:
-            return [.builtInWideAngleCamera]
-        }
-    }
-}
-
-protocol PicCameraFrameConsumer: AnyObject {
-    nonisolated func consume(pixelBuffer: CVPixelBuffer, depthData: AVDepthData?)
-}
 
 final class PicCameraService: NSObject, @unchecked Sendable {
     nonisolated private struct CapturePayload {
@@ -81,9 +37,6 @@ final class PicCameraService: NSObject, @unchecked Sendable {
     nonisolated(unsafe) var onLivePhotoCapture: ((AVCapturePhoto, URL) -> Void)?
     nonisolated(unsafe) var onCaptureError: ((Error?) -> Void)?
     nonisolated(unsafe) var onFaceRects: (([CGRect]) -> Void)?
-
-    private let requestedMinDisplayZoomFactor: CGFloat = 0.5
-    private let requestedMaxDisplayZoomFactor: CGFloat = 40
 
     override init() {
         super.init()
@@ -210,6 +163,7 @@ final class PicCameraService: NSObject, @unchecked Sendable {
                     self.session.canAddOutput(self.depthOutput)
                 if shouldEnableDepth {
                     self.session.addOutput(self.depthOutput)
+                    self.configureDepthOutputForStability()
                 }
                 self.applyMirroringToActiveConnections()
                 if self.photoOutput.isDepthDataDeliverySupported {
@@ -278,6 +232,7 @@ final class PicCameraService: NSObject, @unchecked Sendable {
                     self.session.canAddOutput(self.depthOutput)
                 if shouldEnableDepth {
                     self.session.addOutput(self.depthOutput)
+                    self.configureDepthOutputForStability()
                 }
                 self.applyMirroringToActiveConnections()
                 if self.photoOutput.isDepthDataDeliverySupported {
@@ -353,75 +308,6 @@ final class PicCameraService: NSObject, @unchecked Sendable {
         }
     }
 
-    func currentZoomFactor() -> CGFloat {
-        guard let device = currentInput?.device else { return 1 }
-        let multiplier = zoomDisplayMultiplier(for: device)
-        let displayRange = displayZoomRange(for: device)
-        let currentDisplayFactor = device.videoZoomFactor * multiplier
-        return min(max(currentDisplayFactor, displayRange.lowerBound), displayRange.upperBound)
-    }
-
-    func setZoomFactor(_ factor: CGFloat) async -> CGFloat {
-        await withCheckedContinuation { (continuation: CheckedContinuation<CGFloat, Never>) in
-            sessionQueue.async {
-                guard let device = self.currentInput?.device else {
-                    continuation.resume(returning: 1)
-                    return
-                }
-
-                do {
-                    try device.lockForConfiguration()
-                    let multiplier = self.zoomDisplayMultiplier(for: device)
-                    let displayRange = self.displayZoomRange(for: device)
-                    let clampedDisplay = min(max(factor, displayRange.lowerBound), displayRange.upperBound)
-                    let rawMinFactor = device.minAvailableVideoZoomFactor
-                    let rawMaxByDisplayLimit = self.requestedMaxDisplayZoomFactor / max(multiplier, 0.0001)
-                    let rawMaxFactor = max(rawMinFactor, min(device.maxAvailableVideoZoomFactor, rawMaxByDisplayLimit))
-                    let clampedRaw = min(max(clampedDisplay / multiplier, rawMinFactor), rawMaxFactor)
-                    device.videoZoomFactor = clampedRaw
-                    device.unlockForConfiguration()
-                    let appliedDisplay = min(
-                        max(device.videoZoomFactor * multiplier, displayRange.lowerBound),
-                        displayRange.upperBound
-                    )
-                    continuation.resume(returning: appliedDisplay)
-                } catch {
-                    let multiplier = self.zoomDisplayMultiplier(for: device)
-                    continuation.resume(returning: device.videoZoomFactor * multiplier)
-                }
-            }
-        }
-    }
-
-    private func zoomDisplayMultiplier(for device: AVCaptureDevice) -> CGFloat {
-        if #available(iOS 18.0, *) {
-            return max(device.displayVideoZoomFactorMultiplier, 0.0001)
-        }
-        if device.constituentDevices.contains(where: { $0.deviceType == .builtInUltraWideCamera }) {
-            return 0.5
-        }
-        return 1
-    }
-
-    private func displayZoomRange(for device: AVCaptureDevice) -> ClosedRange<CGFloat> {
-        let multiplier = zoomDisplayMultiplier(for: device)
-        let hardwareLower = device.minAvailableVideoZoomFactor * multiplier
-        let hardwareUpper = device.maxAvailableVideoZoomFactor * multiplier
-        let lower = min(max(hardwareLower, requestedMinDisplayZoomFactor), requestedMaxDisplayZoomFactor)
-        let upper = min(max(hardwareUpper, lower), requestedMaxDisplayZoomFactor)
-        return lower...upper
-    }
-
-    private func defaultRawZoomFactor(for device: AVCaptureDevice) -> CGFloat {
-        let multiplier = zoomDisplayMultiplier(for: device)
-        let targetDisplay: CGFloat = 1
-        let targetRaw = targetDisplay / max(multiplier, 0.0001)
-        let rawMinFactor = device.minAvailableVideoZoomFactor
-        let rawMaxByDisplayLimit = requestedMaxDisplayZoomFactor / max(multiplier, 0.0001)
-        let rawMaxFactor = max(rawMinFactor, min(device.maxAvailableVideoZoomFactor, rawMaxByDisplayLimit))
-        return min(max(targetRaw, rawMinFactor), rawMaxFactor)
-    }
-
     func focus(at normalizedPoint: CGPoint) async {
         let clampedPoint = CGPoint(
             x: min(max(normalizedPoint.x, 0), 1),
@@ -461,6 +347,58 @@ final class PicCameraService: NSObject, @unchecked Sendable {
         }
     }
 
+    func currentZoomFactor() async -> CGFloat {
+        await withCheckedContinuation { (continuation: CheckedContinuation<CGFloat, Never>) in
+            sessionQueue.async {
+                let factor = self.currentInput?.device.videoZoomFactor ?? 1
+                continuation.resume(returning: factor)
+            }
+        }
+    }
+
+    func currentDisplayVideoZoomFactorMultiplier() async -> CGFloat {
+        await withCheckedContinuation { (continuation: CheckedContinuation<CGFloat, Never>) in
+            sessionQueue.async {
+                let multiplier = self.currentInput?.device.displayVideoZoomFactorMultiplier ?? 1
+                continuation.resume(returning: multiplier)
+            }
+        }
+    }
+
+    func setZoomFactor(_ requestedFactor: CGFloat, preferredRange: ClosedRange<CGFloat>) async -> CGFloat {
+        await withCheckedContinuation { (continuation: CheckedContinuation<CGFloat, Never>) in
+            sessionQueue.async {
+                guard let device = self.currentInput?.device else {
+                    continuation.resume(returning: 1)
+                    return
+                }
+
+                let lowerBound = max(preferredRange.lowerBound, device.minAvailableVideoZoomFactor)
+                let upperBound = min(preferredRange.upperBound, device.maxAvailableVideoZoomFactor)
+                let switchOvers = device.virtualDeviceSwitchOverVideoZoomFactors
+                    .map { CGFloat(truncating: $0) }
+                    .sorted()
+                let stableUpperBound: CGFloat
+                if let firstSwitch = switchOvers.first(where: { $0 > lowerBound + 0.05 }) {
+                    stableUpperBound = max(lowerBound, firstSwitch - 0.01)
+                } else {
+                    stableUpperBound = upperBound
+                }
+                let validatedUpperBound = max(min(upperBound, stableUpperBound), lowerBound)
+                let clamped = min(max(requestedFactor, lowerBound), validatedUpperBound)
+
+                do {
+                    try device.lockForConfiguration()
+                    device.videoZoomFactor = clamped
+                    device.unlockForConfiguration()
+                    continuation.resume(returning: device.videoZoomFactor)
+                } catch {
+                    continuation.resume(returning: device.videoZoomFactor)
+                }
+            }
+        }
+    }
+
     private func configureSession(mode: PicCameraMode) -> Bool {
         session.beginConfiguration()
         defer {
@@ -488,9 +426,6 @@ final class PicCameraService: NSObject, @unchecked Sendable {
         videoOutput.videoSettings = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
         ]
-        videoOutput.alwaysDiscardsLateVideoFrames = true
-//        depthOutput.isFilteringEnabled = true
-//        depthOutput.alwaysDiscardsLateDepthData = true
 
         guard session.canAddOutput(videoOutput),
               session.canAddOutput(photoOutput),
@@ -509,6 +444,7 @@ final class PicCameraService: NSObject, @unchecked Sendable {
             session.canAddOutput(depthOutput)
         if shouldEnableDepth {
             session.addOutput(depthOutput)
+            configureDepthOutputForStability()
             applyMirroringToActiveConnections()
         }
 
@@ -610,11 +546,16 @@ final class PicCameraService: NSObject, @unchecked Sendable {
         }
         let candidates = float16Formats.isEmpty ? depthFormats : float16Formats
 
-        return candidates.min { lhs, rhs in
+        return candidates.max { lhs, rhs in
             let lhsDimensions = CMVideoFormatDescriptionGetDimensions(lhs.formatDescription)
             let rhsDimensions = CMVideoFormatDescriptionGetDimensions(rhs.formatDescription)
             return Int(lhsDimensions.width) * Int(lhsDimensions.height) < Int(rhsDimensions.width) * Int(rhsDimensions.height)
         }
+    }
+
+    private func configureDepthOutputForStability() {
+        depthOutput.isFilteringEnabled = true
+        depthOutput.alwaysDiscardsLateDepthData = true
     }
 
     private func applyDeviceConfiguration(to device: AVCaptureDevice) {
@@ -622,7 +563,7 @@ final class PicCameraService: NSObject, @unchecked Sendable {
 
         do {
             try device.lockForConfiguration()
-            device.videoZoomFactor = defaultRawZoomFactor(for: device)
+            device.videoZoomFactor = 1
             if let depthFormat = preferredDepthFormat(for: device) {
                 device.activeDepthDataFormat = depthFormat
             }

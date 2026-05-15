@@ -301,6 +301,8 @@ final class PicCameraRenderer: NSObject, MTKViewDelegate, @unchecked Sendable {
         orientation: CGImagePropertyOrientation,
         aperture: Double = 8
     ) -> CIImage? {
+        let lumaNoiseScale = 0.015
+        let scaleFactor = 0.75
         let disparityDepthData = depthData.converting(toDepthDataType: kCVPixelFormatType_DisparityFloat32).applyingExifOrientation(orientation)
         let filter = ciContext.depthBlurEffectFilter(
             for: image,
@@ -313,6 +315,8 @@ final class PicCameraRenderer: NSObject, MTKViewDelegate, @unchecked Sendable {
             options: nil
         )
         filter?.setValue(aperture, forKey: "inputAperture")
+        filter?.setValue(lumaNoiseScale, forKey: "inputLumaNoiseScale")
+        filter?.setValue(scaleFactor, forKey: "inputScaleFactor")
         return filter?.outputImage
     }
 

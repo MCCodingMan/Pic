@@ -3,80 +3,6 @@ import Observation
 import UIKit
 internal import AVFoundation
 
-enum PicCameraAspectRatio: String, CaseIterable, Identifiable {
-    case ratio1x1 = "1:1"
-    case ratio3x4 = "3:4"
-    case ratio9x16 = "9:16"
-
-    var id: String { rawValue }
-
-    var portraitAspect: CGFloat {
-        switch self {
-        case .ratio1x1: return 1.0
-        case .ratio3x4: return 3.0 / 4.0
-        case .ratio9x16: return 9.0 / 16.0
-        }
-    }
-}
-
-enum PicCameraSwitchOption: String, CaseIterable, Identifiable {
-    case off = "关"
-    case on = "开"
-
-    var id: String { rawValue }
-
-    var isEnabled: Bool {
-        self == .on
-    }
-
-    init(_ isEnabled: Bool) {
-        self = isEnabled ? .on : .off
-    }
-}
-
-enum PicCameraFlashOption: String, CaseIterable, Identifiable {
-    case off = "关闭"
-    case auto = "自动"
-    case on = "开启"
-
-    var id: String { rawValue }
-
-    init(mode: AVCaptureDevice.FlashMode) {
-        switch mode {
-        case .off:
-            self = .off
-        case .auto:
-            self = .auto
-        case .on:
-            self = .on
-        @unknown default:
-            self = .off
-        }
-    }
-
-    var flashMode: AVCaptureDevice.FlashMode {
-        switch self {
-        case .off:
-            return .off
-        case .auto:
-            return .auto
-        case .on:
-            return .on
-        }
-    }
-}
-
-struct PicCameraToast: Equatable {
-    enum Kind: Equatable {
-        case info
-        case success
-        case error
-    }
-
-    let message: String
-    let systemImage: String
-    let kind: Kind
-}
 
 @MainActor
 @Observable
@@ -122,7 +48,7 @@ final class PicCameraViewModel {
     }
 
     let service = PicCameraService()
-    let renderer: PicCameraRenderer? = PicCameraRenderer.make()
+    let renderer = PicCameraRenderer.make()
 
     var mode: PicCameraMode = .photo
     var authorizationStatus: AVAuthorizationStatus = .notDetermined
@@ -163,6 +89,9 @@ final class PicCameraViewModel {
     var selectedAdjustment: AdjustmentType?
     var toolbarActions: [ToolbarAction] = [.beauty, .quickBeauty, .adjust, .filter, .autoFilter, .flash, .livePhoto, .settings]
     private(set) var availableFilters: [String: [FilterModel]] = [:]
+    private let photoZoomRange: ClosedRange<CGFloat> = 0.5...8
+    private let portraitZoomRange: ClosedRange<CGFloat> = 1...4
+    private var zoomDisplayMultiplier: CGFloat = 1
 
     private var bridge: Bridge?
     @ObservationIgnored private var toastDismissTask: Task<Void, Never>?
@@ -254,6 +183,9 @@ final class PicCameraViewModel {
         isConfigurationFailed = false
         await service.startSession()
         refreshControls()
+        zoomDisplayMultiplier = await service.currentDisplayVideoZoomFactorMultiplier()
+        let currentRawZoomFactor = await service.currentZoomFactor()
+        selectedZoomFactor = currentRawZoomFactor * zoomDisplayMultiplier
         if isHistorySettingsEnabled {
             await applySavedStateOnAppear()
         } else {
@@ -294,7 +226,8 @@ final class PicCameraViewModel {
             }
             isConfigurationFailed = false
             refreshControls()
-            selectedZoomFactor = await service.setZoomFactor(requestedZoomFactor)
+            zoomDisplayMultiplier = await service.currentDisplayVideoZoomFactorMultiplier()
+            await applyZoomFactor(requestedZoomFactor)
             if isPortraitDepthUnavailable {
                 showCameraToast("当前设备不支持真实景深", systemImage: "person.crop.rectangle.badge.exclamationmark", kind: .info)
             }
@@ -307,29 +240,6 @@ final class PicCameraViewModel {
 
     func focus(at normalizedPoint: CGPoint) async {
         await service.focus(at: normalizedPoint)
-    }
-
-    func setZoomFactor(_ factor: CGFloat) async {
-        zoomApplyTask?.cancel()
-        selectedZoomFactor = await service.setZoomFactor(factor)
-    }
-
-    func requestZoomFactor(_ factor: CGFloat) {
-        let clampedPreviewValue = min(max(factor, 0.5), 40)
-        selectedZoomFactor = clampedPreviewValue
-        zoomApplyTask?.cancel()
-        zoomApplyTask = Task { @MainActor [weak self] in
-            await Task.yield()
-            guard !Task.isCancelled, let self else { return }
-            let applied = await self.service.setZoomFactor(clampedPreviewValue)
-            guard !Task.isCancelled else { return }
-            self.selectedZoomFactor = applied
-        }
-    }
-
-    func flushRequestedZoomFactor() async {
-        zoomApplyTask?.cancel()
-        selectedZoomFactor = await service.setZoomFactor(selectedZoomFactor)
     }
 
     func toggleFlash() {
@@ -359,7 +269,8 @@ final class PicCameraViewModel {
         if success {
             isConfigurationFailed = false
             refreshControls()
-            selectedZoomFactor = await service.setZoomFactor(requestedZoomFactor)
+            zoomDisplayMultiplier = await service.currentDisplayVideoZoomFactorMultiplier()
+            await applyZoomFactor(requestedZoomFactor)
             if isPortraitDepthUnavailable {
                 showCameraToast("当前设备不支持真实景深", systemImage: "person.crop.rectangle.badge.exclamationmark", kind: .info)
             }
@@ -436,6 +347,44 @@ final class PicCameraViewModel {
     func updateDeviceOrientation(_ orientation: UIDeviceOrientation) {
         guard orientation.isValidInterfaceOrientation else { return }
         deviceOrientation = orientation
+    }
+
+    func setZoomFactor(_ factor: CGFloat) {
+        let zoomRange = currentZoomRange()
+        let clampedDisplay = min(max(factor, zoomRange.lowerBound), zoomRange.upperBound)
+        selectedZoomFactor = clampedDisplay
+        let multiplier = max(zoomDisplayMultiplier, 0.0001)
+        let targetRawFactor = clampedDisplay / multiplier
+        zoomApplyTask?.cancel()
+        zoomApplyTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let appliedRaw = await service.setZoomFactor(targetRawFactor, preferredRange: rawZoomRange())
+            selectedZoomFactor = appliedRaw * zoomDisplayMultiplier
+        }
+    }
+
+    func applyZoomFactor(_ factor: CGFloat) async {
+        let zoomRange = currentZoomRange()
+        let clampedDisplay = min(max(factor, zoomRange.lowerBound), zoomRange.upperBound)
+        let multiplier = max(zoomDisplayMultiplier, 0.0001)
+        let targetRawFactor = clampedDisplay / multiplier
+        let appliedRaw = await service.setZoomFactor(targetRawFactor, preferredRange: rawZoomRange())
+        selectedZoomFactor = appliedRaw * zoomDisplayMultiplier
+    }
+
+    private func rawZoomRange() -> ClosedRange<CGFloat> {
+        let zoomRange = currentZoomRange()
+        let multiplier = max(zoomDisplayMultiplier, 0.0001)
+        return (zoomRange.lowerBound / multiplier)...(zoomRange.upperBound / multiplier)
+    }
+
+    private func currentZoomRange() -> ClosedRange<CGFloat> {
+        mode == .portrait ? portraitZoomRange : photoZoomRange
+    }
+
+    private func clampedZoomFactorForCurrentMode(_ factor: CGFloat) -> CGFloat {
+        let range = currentZoomRange()
+        return min(max(factor, range.lowerBound), range.upperBound)
     }
 
     func toggleBeautyPanel() {
@@ -731,7 +680,6 @@ final class PicCameraViewModel {
     }
 
     private func refreshControls() {
-        selectedZoomFactor = service.currentZoomFactor()
         supportsFlash = service.supportsFlash()
         flashMode = service.currentFlashMode()
         supportsLivePhoto = service.supportsLivePhoto()
@@ -799,8 +747,8 @@ final class PicCameraViewModel {
         }
 
         setLivePhotoEnabled(savedState.isLivePhotoEnabled)
-        await setZoomFactor(CGFloat(savedState.zoomFactor))
         applyNonServiceState(savedState)
+        await applyZoomFactor(CGFloat(savedState.zoomFactor))
         persistHistoryIfNeeded()
     }
 
@@ -813,7 +761,6 @@ final class PicCameraViewModel {
         }
         setFlashOption(.off)
         setLivePhotoEnabled(false)
-        await setZoomFactor(1)
         applyDefaultNonServiceState()
         PicCameraHistoryPersistence.clearState()
     }
@@ -822,6 +769,7 @@ final class PicCameraViewModel {
         if let savedMode = PicCameraMode(rawValue: savedState.modeRawValue) {
             mode = savedMode
         }
+        selectedZoomFactor = clampedZoomFactorForCurrentMode(CGFloat(savedState.zoomFactor))
         if let savedRatio = PicCameraAspectRatio(rawValue: savedState.aspectRatioRawValue) {
             aspectRatio = savedRatio
         } else {
@@ -868,6 +816,7 @@ final class PicCameraViewModel {
         selectedBeautyControl = nil
         selectedAdjustment = nil
         isApertureControlVisible = false
+        selectedZoomFactor = 1
         syncRenderState()
     }
 
