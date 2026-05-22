@@ -21,6 +21,16 @@ struct PicCameraBottomOverlayView: View {
                     .padding(.horizontal, 30)
             }
 
+            if viewModel.activePanel == .composition {
+                if viewModel.selectedCompositionCategory == .portrait {
+                    compositionPoseRow
+                        .padding(.horizontal, 30)
+                }
+
+                compositionPositionRow
+                    .padding(.horizontal, 30)
+            }
+
             if let activePanel = viewModel.activePanel {
                 firstLevelRow(for: activePanel)
                     .padding(.horizontal, 30)
@@ -236,6 +246,8 @@ struct PicCameraBottomOverlayView: View {
             adjustmentControlsRow
         case .filter:
             filterCategoryRow
+        case .composition:
+            compositionCategoryRow
         }
     }
 
@@ -302,6 +314,84 @@ struct PicCameraBottomOverlayView: View {
 
     private var manualFilterCategories: [PicCameraViewModel.FilterPanelCategory] {
         [.scenery, .portrait]
+    }
+
+    private var compositionCategoryRow: some View {
+        HStack(spacing: 10) {
+            Spacer()
+            ForEach(PicCameraViewModel.CompositionCategory.allCases) { category in
+                controlChip(
+                    title: category.rawValue,
+                    isSelected: viewModel.selectedCompositionCategory == category,
+                    isModified: false,
+                    accent: DS.ColorToken.accent(scheme)
+                ) {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        viewModel.selectCompositionCategory(category)
+                    }
+                }
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+    }
+
+    private var compositionPositionRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(viewModel.compositionPositions()) { position in
+                    controlChip(
+                        title: position.rawValue,
+                        isSelected: viewModel.selectedCompositionPosition == position,
+                        isModified: false,
+                        accent: DS.ColorToken.warning(scheme)
+                    ) {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            viewModel.selectCompositionPosition(position)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+        }
+    }
+
+    private var compositionPoseRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(spacing: 10) {
+                ForEach(viewModel.compositionPoseNames(), id: \.self) { poseName in
+                    compositionPoseButton(poseName)
+                }
+            }
+            .padding(.horizontal, 4)
+        }
+        .frame(height: 78)
+    }
+
+    private func compositionPoseButton(_ poseName: String) -> some View {
+        let isSelected = viewModel.selectedCompositionPoseName == poseName
+        return Button {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                viewModel.selectCompositionPoseName(poseName)
+            }
+        } label: {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(.clear)
+
+                Image(poseName)
+                    .resizable()
+                    .scaledToFit()
+                    .padding(6)
+            }
+            .frame(width: 56, height: 72)
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(isSelected ? DS.ColorToken.accent(scheme) : .white.opacity(0.16), lineWidth: isSelected ? 2 : 1)
+            }
+            .shadow(color: .black.opacity(isSelected ? 0.2 : 0.08), radius: isSelected ? 8 : 4, y: 4)
+        }
+        .buttonStyle(.plain)
     }
 
     private var filterOptionsRow: some View {

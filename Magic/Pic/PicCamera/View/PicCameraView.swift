@@ -284,6 +284,19 @@ struct PicCameraView: View {
                 }
             }
             .overlay {
+                if viewModel.activePanel == .composition || viewModel.selectedCompositionPoseName != nil {
+                    PicCameraPortraitCompositionGuideView(
+                        aspectRatio: viewModel.aspectRatio,
+                        deviceOrientation: viewModel.deviceOrientation,
+                        category: viewModel.selectedCompositionCategory,
+                        position: viewModel.selectedCompositionPosition,
+                        poseName: viewModel.selectedCompositionPoseName,
+                        rotationAngle: buttonRotationAngle
+                    )
+                    .allowsHitTesting(false)
+                }
+            }
+            .overlay {
                 if viewModel.isLevelEnabled {
                     if viewModel.deviceOrientation.isLandscape {
                         PicCameraLandscapeLevelView(

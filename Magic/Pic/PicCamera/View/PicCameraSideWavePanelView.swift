@@ -122,7 +122,7 @@ struct PicCameraSideWavePanelView: View {
                 isActive: viewModel.aspectRatio != .ratio9x16,
                 action: {
                     withAnimation(.easeInOut(duration: 0.2)) { viewModel.cycleAspectRatio() }
-                    viewModel.showToolbarHint("显示比例 \(viewModel.aspectRatio.rawValue)")
+                    viewModel.showToolbarHint("显示比例 \(viewModel.aspectRatio.displayName(isLandscape: viewModel.deviceOrientation.isLandscape))")
                 }
             )
         )
@@ -195,6 +195,8 @@ struct PicCameraSideWavePanelView: View {
                 viewModel.toggleAdjustPanel()
             case .filter:
                 viewModel.toggleFilterPanel()
+            case .composition:
+                viewModel.toggleCompositionPanel()
             case .autoFilter:
                 viewModel.toggleAutoFilter()
             case .flash:
@@ -226,6 +228,8 @@ struct PicCameraSideWavePanelView: View {
             "调节"
         case .filter:
             "滤镜"
+        case .composition:
+            "构图"
         case .autoFilter:
             "自动滤镜"
         case .flash:
@@ -245,7 +249,7 @@ struct PicCameraSideWavePanelView: View {
             "实况照片：\(viewModel.isLivePhotoEnabled ? "开" : "关")"
         case .autoFilter:
             "自动滤镜：\(viewModel.isAutoFilterEnabled ? "开" : "关")"
-        case .beauty, .quickBeauty, .adjust, .filter:
+        case .beauty, .quickBeauty, .adjust, .filter, .composition:
             "\(title(for: action))：\(viewModel.isToolbarActionActive(action) ? "开" : "关")"
         case .settings:
             title(for: action)
@@ -262,6 +266,8 @@ struct PicCameraSideWavePanelView: View {
             viewModel.activePanel == .adjust || !viewModel.adjustments.isDefault ? DS.ColorToken.success(scheme) : DS.ColorToken.textPrimary(scheme).opacity(0.8)
         case .filter:
             viewModel.activePanel == .filter || viewModel.isFilterModified ? DS.ColorToken.warning(scheme) : DS.ColorToken.textPrimary(scheme).opacity(0.8)
+        case .composition:
+            viewModel.activePanel == .composition ? DS.ColorToken.accent(scheme) : DS.ColorToken.textPrimary(scheme).opacity(0.8)
         case .autoFilter:
             viewModel.isAutoFilterEnabled ? DS.ColorToken.warning(scheme) : DS.ColorToken.textPrimary(scheme).opacity(0.8)
         case .flash:
@@ -313,14 +319,7 @@ struct PicCameraSideWavePanelView: View {
     }
 
     private var aspectRatioIconName: String {
-        switch viewModel.aspectRatio {
-        case .ratio1x1:
-            "square"
-        case .ratio3x4:
-            "rectangle.ratio.3.to.4"
-        case .ratio9x16:
-            "rectangle.ratio.9.to.16"
-        }
+        viewModel.aspectRatio.iconName(isLandscape: viewModel.deviceOrientation.isLandscape)
     }
 }
 
