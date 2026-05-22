@@ -9,6 +9,14 @@ struct AlbumModel: Identifiable, Hashable {
     let collection: PHAssetCollection?
 }
 
+private final class AlbumPhotoLibraryObserver: NSObject, PHPhotoLibraryChangeObserver {
+    var onChange: (() -> Void)?
+
+    func photoLibraryDidChange(_ changeInstance: PHChange) {
+        onChange?()
+    }
+}
+
 @Observable
 class AlbumViewModel {
     var assets: PHFetchResult<PHAsset> = PHFetchResult()
@@ -17,9 +25,23 @@ class AlbumViewModel {
     var authorizationStatus: PHAuthorizationStatus = .notDetermined
     
     let imageManager = PHCachingImageManager()
+
+    @ObservationIgnored private let libraryObserver = AlbumPhotoLibraryObserver()
+    @ObservationIgnored private var isObservingPhotoLibrary = false
     
     init() {
+        libraryObserver.onChange = { [weak self] in
+            Task { @MainActor in
+                self?.reloadAfterPhotoLibraryChange()
+            }
+        }
         checkPermission()
+    }
+
+    deinit {
+        if isObservingPhotoLibrary {
+            PHPhotoLibrary.shared().unregisterChangeObserver(libraryObserver)
+        }
     }
     
     func checkPermission() {
@@ -27,6 +49,7 @@ class AlbumViewModel {
         Task { @MainActor in
             self.authorizationStatus = status
             if status == .authorized || status == .limited {
+                self.startObservingPhotoLibrary()
                 self.fetchAlbums()
             }
         }
@@ -37,12 +60,14 @@ class AlbumViewModel {
             let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
             authorizationStatus = status
             if status == .authorized || status == .limited {
+                startObservingPhotoLibrary()
                 fetchAlbums()
             }
         }
     }
     
-    func fetchAlbums() {
+    func fetchAlbums(preserveSelection: Bool = false) {
+        let selectedAlbumID = preserveSelection ? selectedAlbum?.id : nil
         var newAlbums: [AlbumModel] = []
         
         // 1. Recents (Smart Album)
@@ -80,7 +105,11 @@ class AlbumViewModel {
         
         Task { @MainActor in
             self.albums = newAlbums
-            self.selectedAlbum = newAlbums.first
+            if let selectedAlbumID, let album = newAlbums.first(where: { $0.id == selectedAlbumID }) {
+                self.selectedAlbum = album
+            } else {
+                self.selectedAlbum = newAlbums.first
+            }
             self.fetchAssets()
         }
     }
@@ -120,5 +149,18 @@ class AlbumViewModel {
     
     func stopCachingAll() {
         imageManager.stopCachingImagesForAllAssets()
+    }
+
+    private func startObservingPhotoLibrary() {
+        guard !isObservingPhotoLibrary else { return }
+        PHPhotoLibrary.shared().register(libraryObserver)
+        isObservingPhotoLibrary = true
+    }
+
+    @MainActor
+    private func reloadAfterPhotoLibraryChange() {
+        guard authorizationStatus == .authorized || authorizationStatus == .limited else { return }
+        stopCachingAll()
+        fetchAlbums(preserveSelection: true)
     }
 }

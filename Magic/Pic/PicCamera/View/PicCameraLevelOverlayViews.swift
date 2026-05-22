@@ -35,32 +35,20 @@ struct PicCameraPortraitCompositionGuideView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            if category == .portrait {
-                Image(poseName ?? "f_1")
+            if category == .portrait, let poseName {
+                Image(poseName)
                     .resizable()
                     .scaledToFit()
                     .opacity(0.82)
                     .shadow(color: .black.opacity(0.3), radius: 5, y: 2)
                     .frame(
-                        width: proxy.size.width * guide.personSize.width * 2.0,
-                        height: proxy.size.height * guide.personSize.height * 2.0
+                        width: proxy.size.width * guide.personSize.width * 2.8,
+                        height: proxy.size.height * guide.personSize.height * 2.8
                     )
                     .position(
                         x: proxy.size.width * guide.personCenter.x,
                         y: proxy.size.height * guide.personCenter.y
                     )
-            } else {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(.white.opacity(0.72), style: StrokeStyle(lineWidth: 1.5, dash: [8, 5]))
-                    .frame(
-                        width: proxy.size.width * guide.zoneSize.width,
-                        height: proxy.size.height * guide.zoneSize.height
-                    )
-                    .position(
-                        x: proxy.size.width * guide.zoneCenter.x,
-                        y: proxy.size.height * guide.zoneCenter.y
-                    )
-                    .shadow(color: .black.opacity(0.24), radius: 3, y: 1)
             }
         }
     }
@@ -141,13 +129,13 @@ private struct PicCameraPortraitCompositionGuide {
                 nextZoneColor = .cyan
                 switch selectedPosition {
                 case .leftThird, .leadingSpace:
-                    nextPersonCenter = CGPoint(x: 0.33, y: 0.72)
+                    nextPersonCenter = CGPoint(x: 0.33, y: 0.7)
                     nextLine = .leftThird
                 case .rightThird:
-                    nextPersonCenter = CGPoint(x: 0.67, y: 0.72)
+                    nextPersonCenter = CGPoint(x: 0.67, y: 0.7)
                     nextLine = .rightThird
                 default:
-                    nextPersonCenter = CGPoint(x: 0.5, y: 0.72)
+                    nextPersonCenter = CGPoint(x: 0.5, y: 0.7)
                     nextLine = .lowerThird
                 }
             case (.ratio3x4, true): // 4:3
