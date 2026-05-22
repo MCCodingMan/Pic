@@ -7,6 +7,8 @@ struct AlbumView: View {
     @Environment(\.colorScheme) var scheme
     
     @State private var viewModel = AlbumViewModel()
+    @State private var previewIndex = 0
+    @State private var isPreviewPresented = false
     @Namespace private var previewNamespace
     
     // Callback for when an image is selected
@@ -69,6 +71,13 @@ struct AlbumView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarHidden(false)
+        .navigationDestination(isPresented: $isPreviewPresented) {
+            AlbumPhotoPreviewView(
+                viewModel: viewModel,
+                initialIndex: previewIndex,
+                namespace: previewNamespace
+            )
+        }
     }
     
     // MARK: - Grid View
@@ -78,23 +87,14 @@ struct AlbumView: View {
                 // Use fetchResult count directly to avoid loading all assets into memory array
                 ForEach(0..<viewModel.assets.count, id: \.self) { index in
                     let asset = viewModel.assets[index]
-                    NavigationLink {
-                        AlbumPhotoPreviewView(
-                            viewModel: viewModel,
-                            initialIndex: index,
-                            namespace: previewNamespace,
-                            onSelect: onSelect.map { select in
-                                { image in
-                                    select(image)
-                                    dismiss()
-                                }
-                            }
-                        )
+                    Button {
+                        previewIndex = index
+                        isPreviewPresented = true
                     } label: {
                         PhotoThumbnailView(asset: asset)
                             .aspectRatio(1, contentMode: .fill)
                             .clipped()
-                            .matchedTransitionSource(id: asset.localIdentifier, in: previewNamespace)
+//                            .matchedTransitionSource(id: asset.localIdentifier, in: previewNamespace)
                     }
                     .buttonStyle(.plain)
                 }
@@ -144,23 +144,18 @@ private struct AlbumPhotoPreviewView: View {
 
     let viewModel: AlbumViewModel
     @State private var selectedIndex: Int
+    @State private var showThumb: Bool = true
     let namespace: Namespace.ID
-    let onSelect: ((UIImage) -> Void)?
-
-    @State private var selectedImage: UIImage?
     @State private var isCurrentPageZoomed = false
-    @State private var isThumbnailStripDragging = false
 
     init(
         viewModel: AlbumViewModel,
         initialIndex: Int,
-        namespace: Namespace.ID,
-        onSelect: ((UIImage) -> Void)?
+        namespace: Namespace.ID
     ) {
         self.viewModel = viewModel
         self._selectedIndex = State(initialValue: initialIndex)
         self.namespace = namespace
-        self.onSelect = onSelect
     }
 
     var body: some View {
@@ -183,22 +178,16 @@ private struct AlbumPhotoPreviewView: View {
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
-            .scrollDisabled(isCurrentPageZoomed || isThumbnailStripDragging)
+            .scrollDisabled(isCurrentPageZoomed)
             .ignoresSafeArea()
 
             topBar
             thumbnailStrip
+                .padding(.horizontal, 12)
         }
-        .navigationTransition(.zoom(sourceID: currentSourceID, in: namespace))
+//        .navigationTransition(.zoom(sourceID: currentSourceID, in: namespace))
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
-        .onChange(of: selectedIndex) { _, _ in
-            isCurrentPageZoomed = false
-        }
-        .task(id: selectedIndex) {
-            guard viewModel.assets.count > 0 else { return }
-            selectedImage = await loadImage(for: viewModel.assets[clampedSelectedIndex])
-        }
     }
 
     private var clampedSelectedIndex: Int {
@@ -225,23 +214,6 @@ private struct AlbumPhotoPreviewView: View {
                 .buttonStyle(.plain)
 
                 Spacer()
-
-                if let onSelect {
-                    Button {
-                        if let selectedImage {
-                            onSelect(selectedImage)
-                        }
-                    } label: {
-                        Text("选择")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 16)
-                            .frame(height: 38)
-                            .background(Capsule().fill(DS.ColorToken.brandPrimary(scheme)))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(selectedImage == nil)
-                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 14)
@@ -253,55 +225,31 @@ private struct AlbumPhotoPreviewView: View {
     private var thumbnailStrip: some View {
         VStack {
             Spacer()
-
-            GeometryReader { geometry in
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        LazyHStack(spacing: 0) {
-                            ForEach(0..<viewModel.assets.count, id: \.self) { index in
-                                let isSelected = selectedIndex == index
-                                Button {
-                                    withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
-                                        selectedIndex = index
+            
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 0) {
+                    ForEach(0..<viewModel.assets.count, id: \.self) { index in
+                        let isSelected = selectedIndex == index
+                        Button {
+                            selectedIndex = index
+                        } label: {
+                            ZStack {
+                                PhotoThumbnailView(asset: viewModel.assets[index])
+                                    .frame(width: 28, height: 56)
+                                    .clipped()
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                            .stroke(isSelected ? Color.red : Color.clear, lineWidth: 2)
                                     }
-                                } label: {
-                                    PhotoThumbnailView(asset: viewModel.assets[index])
-                                        .frame(width: 56, height: 56)
-                                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                                        .overlay {
-                                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                                .stroke(isSelected ? Color.white : Color.white.opacity(0.16), lineWidth: isSelected ? 2 : 1)
-                                        }
-                                        .scaleEffect(isSelected ? 1.1 : 1)
-                                }
-                                .buttonStyle(.plain)
-                                .padding(.horizontal, isSelected ? 20 : 8)
-                                .id(index)
+                                    .scaleEffect(isSelected ? 1.1 : 1)
+                                    .padding(.horizontal, isSelected ? 2 : 0)
                             }
                         }
-                        .safeAreaPadding(.horizontal, max((geometry.size.width - 56) / 2, 0))
-                        .padding(.vertical, 12)
-                    }
-                    .simultaneousGesture(
-                        DragGesture(minimumDistance: 1)
-                            .onChanged { _ in
-                                isThumbnailStripDragging = true
-                            }
-                            .onEnded { _ in
-                                isThumbnailStripDragging = false
-                            }
-                    )
-                    .onAppear {
-                        proxy.scrollTo(selectedIndex, anchor: .center)
-                    }
-                    .onChange(of: selectedIndex) { _, newValue in
-                        withAnimation(.easeInOut(duration: 0.22)) {
-                            proxy.scrollTo(newValue, anchor: .center)
-                        }
+                        .id(index)
                     }
                 }
+                .padding(12)
             }
-            .frame(height: 92)
             .background(
                 LinearGradient(
                     colors: [.clear, .black.opacity(0.72)],
@@ -310,8 +258,13 @@ private struct AlbumPhotoPreviewView: View {
                 )
                 .allowsHitTesting(false)
             )
+            .frame(height: 92)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.white.opacity(0.28), lineWidth: 1)
+            }
         }
-        .ignoresSafeArea(edges: .bottom)
     }
 
     private func loadImage(for asset: PHAsset) async -> UIImage? {
@@ -388,11 +341,7 @@ private struct AlbumZoomableAssetPage: View {
                 toggleZoom(in: size)
             }
 
-        if scale > 1.001 {
-            content.simultaneousGesture(panGesture(in: size))
-        } else {
-            content
-        }
+        content.gesture(panGesture(in: size), isEnabled: scale > 1.001)
     }
 
     private func magnifyGesture(in size: CGSize) -> some Gesture {

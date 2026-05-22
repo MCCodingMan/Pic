@@ -32,6 +32,7 @@ struct PhotoThumbnailView: View {
                 cancelImageRequest()
             }
         }
+        .contentShape(.rect)
     }
     
     private func loadImage(targetSize: CGSize) {

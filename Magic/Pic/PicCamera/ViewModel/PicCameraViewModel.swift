@@ -611,8 +611,8 @@ final class PicCameraViewModel {
             selectedCompositionPosition = positions.first
         }
         let poses = compositionPoseNames()
-        if selectedCompositionPoseName.map({ !poses.contains($0) }) ?? true {
-            selectedCompositionPoseName = poses.first
+        if let selectedCompositionPoseName, !poses.contains(selectedCompositionPoseName) {
+            self.selectedCompositionPoseName = nil
         }
     }
 
