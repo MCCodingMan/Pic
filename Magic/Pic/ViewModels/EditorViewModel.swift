@@ -17,6 +17,7 @@ class EditorViewModel {
     var originalUIImage: UIImage? // For comparison and fallback
     var previewImage: UIImage?
     var isProcessing: Bool = false
+    var presets: [EditPreset] = []
 
     // Performance: Downsampled image for preview
     private var downsampledOriginalImage: CIImage?
@@ -40,6 +41,7 @@ class EditorViewModel {
         self.editState = project.currentEditState
         setupUpdateStream()
         loadFilters()
+        loadPresets()
     }
 
     deinit {
@@ -335,6 +337,34 @@ class EditorViewModel {
     private func loadFilters() {
         let all = FilterModel.generateFilters()
         self.availableFilters = Dictionary(grouping: all, by: { $0.category })
+    }
+
+    func loadPresets() {
+        presets = PersistenceService.shared.loadPresets().sorted { $0.createdAt > $1.createdAt }
+    }
+
+    func saveCurrentPreset(named name: String) {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalName = trimmedName.isEmpty ? "我的预设 \(presets.count + 1)" : trimmedName
+        let preset = EditPreset(
+            name: finalName,
+            adjustments: editState.adjustments,
+            filter: editState.filter
+        )
+        presets.insert(preset, at: 0)
+        PersistenceService.shared.savePresets(presets)
+    }
+
+    func applyPreset(_ preset: EditPreset) {
+        commitEdit("套用预设: \(preset.name)")
+        editState.adjustments = preset.adjustments
+        editState.filter = preset.filter
+        scheduleUpdate()
+    }
+
+    func deletePreset(_ preset: EditPreset) {
+        presets.removeAll { $0.id == preset.id }
+        PersistenceService.shared.savePresets(presets)
     }
 
     // Masks
