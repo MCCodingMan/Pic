@@ -10,6 +10,7 @@ import CoreImage
 
 private enum CIImageRenderContext {
     nonisolated static let context = CIContext(options: [.cacheIntermediates: false])
+    
 }
 
 extension UIImage {
