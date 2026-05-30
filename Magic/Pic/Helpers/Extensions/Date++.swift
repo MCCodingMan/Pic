@@ -15,5 +15,6 @@ extension Date {
         let dateSec = date.timeIntervalSince1970
         
         return nowSec >= dateSec
+        
     }
 }
