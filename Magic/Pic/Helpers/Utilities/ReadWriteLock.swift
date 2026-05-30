@@ -12,6 +12,7 @@ public class ReadWriteLock<T> {
     private var _wrappedValue: T
     private let lock = NSRecursiveLock()
     
+    
     public var wrappedValue: T {
         get { self.read { $0 } }
         set { self.update { $0 = newValue } }
