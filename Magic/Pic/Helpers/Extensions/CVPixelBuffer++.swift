@@ -11,5 +11,6 @@ import CoreVideo
 extension CVPixelBuffer {
     nonisolated var ciImage: CIImage {
         CIImage(cvPixelBuffer: self)
+        
     }
 }
