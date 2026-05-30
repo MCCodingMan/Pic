@@ -326,6 +326,7 @@ private struct AlbumZoomableAssetPage: View {
                 resetZoom()
             }
         }
+        
     }
 
     @ViewBuilder
