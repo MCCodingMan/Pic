@@ -12,6 +12,7 @@ import Vision
 /// 调用方拿到 FaceContext 之后，传给 ImagePipeline / FaceMaskGenerator / 瘦脸 等下游消费。
 nonisolated enum FaceDetectionService {
 
+    
     // MARK: - 高精度（Vision）
 
     /// 在后台执行 Vision 高精度人脸 + landmarks 检测。
