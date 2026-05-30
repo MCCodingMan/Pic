@@ -324,9 +324,10 @@ private struct AlbumZoomableAssetPage: View {
         .onChange(of: isCurrent) { _, newValue in
             if !newValue {
                 resetZoom()
+                
             }
+            
         }
-        
     }
 
     @ViewBuilder
