@@ -19,6 +19,7 @@ enum SwiftApp {
             return .zero
         }
         return window.safeAreaInsets
+        
     }
     
     // MARK: - Screen
