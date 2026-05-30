@@ -11,6 +11,7 @@ nonisolated struct FaceContext: Sendable {
         case none
     }
     
+    
 
     struct Face: @unchecked Sendable {
         /// 归一化坐标 (Vision 坐标系：原点左下，y 向上)
