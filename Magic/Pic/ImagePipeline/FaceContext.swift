@@ -9,7 +9,9 @@ nonisolated struct FaceContext: Sendable {
         case vision        // 高精度 Vision (含 landmarks)
         case avMetadata    // 实时 AVCaptureMetadataOutput (仅 box)
         case none
-    }    
+    }
+    
+    
 
     struct Face: @unchecked Sendable {
         /// 归一化坐标 (Vision 坐标系：原点左下，y 向上)
