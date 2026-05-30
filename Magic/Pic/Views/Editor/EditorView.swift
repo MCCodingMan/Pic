@@ -9,6 +9,7 @@ enum EditorMode: String, CaseIterable, Identifiable {
     case curves = "曲线"
     case masks = "蒙版"
     case filter = "滤镜"
+    case preset = "预设"
     case sticker = "贴纸"
     case text = "文字"
     case doodle = "涂鸦"
@@ -27,6 +28,8 @@ struct EditorView: View {
     @State private var saveErrorMessage = ""
     @State private var showHistory = false // Placeholder for History view
     @State private var showCropView = false
+    @State private var showSavePresetAlert = false
+    @State private var presetName = ""
     
     // Text Editor State
     @State private var isShowingTextEditor = false
@@ -89,6 +92,18 @@ struct EditorView: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text(saveErrorMessage)
+        }
+        .alert("保存预设", isPresented: $showSavePresetAlert) {
+            TextField("预设名称", text: $presetName)
+            Button("取消", role: .cancel) {
+                presetName = ""
+            }
+            Button("保存") {
+                viewModel.saveCurrentPreset(named: presetName)
+                presetName = ""
+            }
+        } message: {
+            Text("保存当前滤镜和调节参数。")
         }
         .sheet(isPresented: $showHistory) {
             HistoryView(
@@ -503,6 +518,8 @@ struct EditorView: View {
                             masksControls
                         case .filter:
                             filterSelector
+                        case .preset:
+                            presetControls
                         case .sticker:
                             stickerControls
                         case .text:
@@ -834,6 +851,86 @@ struct EditorView: View {
                     }
                 }
                 .padding(.horizontal, 24)
+            }
+        }
+    }
+
+    // MARK: - Preset Controls
+    private var presetControls: some View {
+        VStack(spacing: 14) {
+            HStack {
+                Button {
+                    presetName = ""
+                    showSavePresetAlert = true
+                } label: {
+                    Label("保存当前效果", systemImage: "plus.circle.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(DS.ColorToken.onBrand)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(DS.ColorToken.brandPrimary(scheme))
+                        .clipShape(Capsule())
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 24)
+
+            if viewModel.presets.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "slider.horizontal.below.square.filled.and.square")
+                        .font(.system(size: 28))
+                        .foregroundColor(DS.ColorToken.textSecondary(scheme))
+                    Text("暂无预设")
+                        .font(.caption)
+                        .foregroundColor(DS.ColorToken.textSecondary(scheme))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(viewModel.presets) { preset in
+                            Button {
+                                viewModel.applyPreset(preset)
+                            } label: {
+                                VStack(spacing: 8) {
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(DS.ColorToken.surfaceAlt(scheme))
+                                        .frame(width: 74, height: 58)
+                                        .overlay {
+                                            VStack(spacing: 4) {
+                                                Image(systemName: preset.filter == .original ? "slider.horizontal.3" : "camera.filters")
+                                                    .font(.system(size: 18, weight: .semibold))
+                                                Text(preset.filter == .original ? "调节" : preset.filter.name)
+                                                    .font(.system(size: 10))
+                                                    .lineLimit(1)
+                                            }
+                                            .foregroundColor(DS.ColorToken.textSecondary(scheme))
+                                            .padding(.horizontal, 6)
+                                        }
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 12)
+                                                .stroke(DS.ColorToken.outline(scheme), lineWidth: 1)
+                                        )
+
+                                    Text(preset.name)
+                                        .font(.caption2)
+                                        .foregroundColor(DS.ColorToken.textPrimary(scheme))
+                                        .lineLimit(1)
+                                        .frame(width: 74)
+                                }
+                            }
+                            .contextMenu {
+                                Button(role: .destructive) {
+                                    viewModel.deletePreset(preset)
+                                } label: {
+                                    Label("删除", systemImage: "trash")
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 2)
+                }
             }
         }
     }
@@ -1281,6 +1378,7 @@ struct EditorView: View {
         case .curves: return "scribble.variable"
         case .masks: return "circle.dashed.inset.filled"
         case .filter: return "camera.filters"
+        case .preset: return "slider.horizontal.below.square.filled.and.square"
         case .sticker: return "face.smiling"
         case .text: return "textformat"
         case .doodle: return "pencil.tip.crop.circle"

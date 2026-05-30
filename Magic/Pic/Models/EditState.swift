@@ -52,6 +52,22 @@ struct EditState: Codable, Equatable, Identifiable {
     }
 }
 
+struct EditPreset: Codable, Equatable, Identifiable {
+    var id: UUID
+    var name: String
+    var createdAt: Date
+    var adjustments: Adjustments
+    var filter: FilterModel
+
+    init(name: String, adjustments: Adjustments, filter: FilterModel) {
+        self.id = UUID()
+        self.name = name
+        self.createdAt = Date()
+        self.adjustments = adjustments
+        self.filter = filter
+    }
+}
+
 // MARK: - Sticker Model
 struct Sticker: Codable, Equatable, Identifiable {
     var id: UUID

@@ -5,6 +5,7 @@ class PersistenceService {
 
     private let fileManager = FileManager.default
     private let projectsFileName = "projects.json"
+    private let presetsFileName = "edit_presets.json"
 
     private var projectsURL: URL {
         let documents = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -14,6 +15,11 @@ class PersistenceService {
     private var backupURL: URL {
         let documents = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return documents.appendingPathComponent("projects.backup.json")
+    }
+
+    private var presetsURL: URL {
+        let documents = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return documents.appendingPathComponent(presetsFileName)
     }
 
     func save(projects: [PhotoProject]) {
@@ -62,5 +68,25 @@ class PersistenceService {
             projects.append(project)
         }
         save(projects: projects)
+    }
+
+    func savePresets(_ presets: [EditPreset]) {
+        do {
+            let data = try JSONEncoder().encode(presets)
+            try data.write(to: presetsURL, options: .atomic)
+        } catch {
+            print("Error saving presets: \(error)")
+        }
+    }
+
+    func loadPresets() -> [EditPreset] {
+        guard fileManager.fileExists(atPath: presetsURL.path) else { return [] }
+        do {
+            let data = try Data(contentsOf: presetsURL)
+            return try JSONDecoder().decode([EditPreset].self, from: data)
+        } catch {
+            print("Error loading presets: \(error)")
+            return []
+        }
     }
 }
